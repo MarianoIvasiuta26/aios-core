@@ -52,6 +52,19 @@ export class Director {
     }
   }
 
+  /** Estado visible de un personaje (para paneles y tooltips). */
+  status(agent: string) {
+    const st = this.agents.get(agent);
+    if (!st) return null;
+    return {
+      present: st.actor.visible,
+      where: st.where,
+      finished: st.finished,
+      idle: st.idle,
+      activity: st.queue.at(-1) ?? st.current,
+    };
+  }
+
   /** Camino evitando las sillas ajenas. */
   pathFor(agent: string) {
     const home = this.places.home(agent);

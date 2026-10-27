@@ -25,6 +25,8 @@ function label(text: string, size: number, fill: string, opts: { weight?: '500' 
   return t;
 }
 
+export type Pick = { type: 'agent'; agent: string } | { type: 'zone'; zone: string };
+
 function framesFor(agent: string): ActorFrames {
   const sheet = Texture.from(drawCharacterSheet(agent));
   const frame = (col: number, row: number) =>
@@ -237,8 +239,15 @@ export class OfficeScene {
   camera!: Camera;
   private board!: WallTaskBoard;
   private readonly highlight = new Graphics();
+  private readonly zoneOutline = new Graphics();
+  /** Click (sin arrastre) sobre un personaje o una zona. */
+  onPick: ((pick: Pick | null) => void) | null = null;
+  /** Personaje bajo el cursor, con su posición en pantalla. */
+  onHover: ((hover: { agent: string; x: number; y: number } | null) => void) | null = null;
+  private hovered: string | null = null;
   private highlighted: string | null = null;
   private elapsed = 0;
+  private unlisten: (() => void) | null = null;
   private destroyed = false;
   private initialized = false;
 
@@ -350,9 +359,42 @@ export class OfficeScene {
       overlay.addChild(sign);
     }
 
-    // Indicador del agente resaltado (click en una tarjeta).
+    // Indicador del agente resaltado (click en una tarjeta) y contorno de la zona elegida.
     this.highlight.visible = false;
-    overlay.addChild(this.highlight);
+    this.zoneOutline.visible = false;
+    overlay.addChild(this.zoneOutline, this.highlight);
+
+    const canvas = this.app.canvas;
+    const local = (e: PointerEvent) => {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+    const onUp = (e: PointerEvent) => {
+      if (this.camera.wasDrag || e.button !== 0) return;
+      const p = local(e);
+      this.onPick?.(this.pickAt(p.x, p.y));
+    };
+    const onMove = (e: PointerEvent) => {
+      if (e.buttons !== 0) return;
+      const p = local(e);
+      const pick = this.pickAt(p.x, p.y);
+      const agent = pick?.type === 'agent' ? pick.agent : null;
+      canvas.style.cursor = agent ? 'pointer' : '';
+      this.hovered = agent;
+      this.emitHover();
+    };
+    const onLeave = () => {
+      this.hovered = null;
+      this.emitHover();
+    };
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerleave', onLeave);
+    this.unlisten = () => {
+      canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerleave', onLeave);
+    };
 
     this.camera = new Camera(this.app, this.world, WORLD_W, WORLD_H);
     this.camera.fit();
@@ -373,6 +415,7 @@ export class OfficeScene {
     for (const m of this.monitors) m.update(dt);
     this.particles.update(dt);
     this.camera.update(dt);
+    if (this.hovered) this.emitHover();
     if (this.highlighted) {
       const actor = this.actors.get(this.highlighted);
       if (actor) {
@@ -382,6 +425,75 @@ export class OfficeScene {
       }
     }
   };
+
+  /** Coordenadas de pantalla (CSS px del canvas) → mundo. */
+  toWorld(sx: number, sy: number) {
+    return { x: (sx - this.world.x) / this.world.scale.x, y: (sy - this.world.y) / this.world.scale.y };
+  }
+
+  toScreen(wx: number, wy: number) {
+    return { x: wx * this.world.scale.x + this.world.x, y: wy * this.world.scale.y + this.world.y };
+  }
+
+  /** Personaje (el de más adelante si se superponen) o, si no, la zona bajo ese punto. */
+  pickAt(sx: number, sy: number): Pick | null {
+    const w = this.toWorld(sx, sy);
+    let best: Actor | null = null;
+    for (const actor of this.actors.values()) {
+      if (!actor.visible) continue;
+      const { x, y } = actor.container;
+      if (w.x >= x - 7 && w.x <= x + 7 && w.y >= y - CHAR_H && w.y <= y + 8 && (!best || y > best.container.y)) best = actor;
+    }
+    if (best) return { type: 'agent', agent: best.agent };
+    const tx = Math.floor(w.x / TILE);
+    const ty = Math.floor(w.y / TILE);
+    const zone = this.map.zones.find((z) => tx >= z.rect.x && tx < z.rect.x + z.rect.w && ty >= z.rect.y && ty < z.rect.y + z.rect.h);
+    return zone ? { type: 'zone', zone: zone.id } : null;
+  }
+
+  private emitHover() {
+    const actor = this.hovered ? this.actors.get(this.hovered) : null;
+    if (!actor?.visible) {
+      this.onHover?.(null);
+      return;
+    }
+    const p = this.toScreen(actor.container.x, actor.container.y - CHAR_H - 2);
+    this.onHover?.({ agent: actor.agent, x: p.x, y: p.y });
+  }
+
+  setZoneOutline(zone: string | null) {
+    const z = zone ? this.map.zones.find((x) => x.id === zone) : null;
+    this.zoneOutline.clear();
+    this.zoneOutline.visible = !!z;
+    if (!z) return;
+    const { x, y, w, h } = z.rect;
+    this.zoneOutline.rect(x * TILE, y * TILE, w * TILE, h * TILE).stroke({ color: '#f2c14e', width: 1.5, alpha: 0.9 });
+  }
+
+  focusZone(zone: string) {
+    const z = this.map.zones.find((x) => x.id === zone);
+    if (!z) return;
+    const { x, y, w, h } = z.rect;
+    const zoom = Math.min(this.app.screen.width / ((w + 4) * TILE), this.app.screen.height / ((h + 4) * TILE), 4);
+    this.camera.focus((x + w / 2) * TILE, (y + h / 2) * TILE, zoom);
+  }
+
+  /** Zona donde está parado ahora un personaje. */
+  pickAgentZone(agent: string): string | null {
+    const actor = this.actors.get(agent);
+    if (!actor?.visible) return null;
+    const { x, y } = actor.tile;
+    return this.map.zones.find((z) => x >= z.rect.x && x < z.rect.x + z.rect.w && y >= z.rect.y && y < z.rect.y + z.rect.h)?.id ?? null;
+  }
+
+  focusAgent(agent: string) {
+    const actor = this.actors.get(agent);
+    if (actor?.visible) this.camera.focus(actor.center.x, actor.center.y, Math.max(this.camera.zoom, 3.5));
+  }
+
+  status(agent: string) {
+    return this.director?.status(agent) ?? null;
+  }
 
   /** Rehace el piso a partir del historial de la sesión (sin animar). */
   resetFloor(events: OfficeEvent[]) {
@@ -420,6 +532,7 @@ export class OfficeScene {
     this.destroyed = true;
     if (!this.initialized) return;
     this.camera?.detach();
+    this.unlisten?.();
     this.app.ticker.remove(this.tick);
     this.app.destroy(true, { children: true, texture: true });
   }

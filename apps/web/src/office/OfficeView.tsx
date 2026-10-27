@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { profileFor, type OfficeEvent } from '@office/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
+import { profileFor } from '@office/shared';
 import { AgentAvatar } from '../components/AgentAvatar.tsx';
-import { api } from '../lib/api.ts';
+import { TaskDrawer } from '../board/TaskDrawer.tsx';
 import { useOffice } from '../lib/store.ts';
+import { EMPTY_FILTER, type TimelineFilter } from './insights.ts';
+import { AgentPanel, AgentTooltip, FloorPicker, ZonePanel } from './panels.tsx';
 import { OfficeScene } from './scene.ts';
+import { Timeline } from './Timeline.tsx';
+import '../board/board.css';
 import './office.css';
 
 export function OfficeView() {
@@ -14,17 +19,29 @@ export function OfficeView() {
   const tasks = useOffice((s) => s.tasks);
   const highlighted = useOffice((s) => s.highlightedAgent);
   const highlightAgent = useOffice((s) => s.highlightAgent);
-  const floor = useOffice((s) => s.floor);
+  const selection = useOffice((s) => s.selection);
+  const select = useOffice((s) => s.select);
+  const openTaskId = useOffice((s) => s.openTaskId);
+  const openTask = useOffice((s) => s.openTask);
+  const [hover, setHover] = useState<{ agent: string; x: number; y: number } | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [filter, setFilter] = useState<TimelineFilter>(EMPTY_FILTER);
 
   useEffect(() => {
     const scene = new OfficeScene();
     sceneRef.current = scene;
     if (import.meta.env.DEV) (window as unknown as { __office?: OfficeScene }).__office = scene;
     let alive = true;
+    scene.onPick = (pick) => useOffice.getState().select(pick);
+    scene.onHover = setHover;
     void scene.init(host.current!).then(() => alive && setReady(true));
     const timer = setInterval(() => setFps(Math.round(scene.fps)), 500);
+    // Pixi solo escucha el resize de la ventana; el panel de abajo también cambia el tamaño.
+    const resize = new ResizeObserver(() => scene.app.renderer && scene.app.resize());
+    resize.observe(host.current!);
     return () => {
       alive = false;
+      resize.disconnect();
       clearInterval(timer);
       scene.destroy();
       sceneRef.current = null;
@@ -40,45 +57,38 @@ export function OfficeView() {
     if (ready) sceneRef.current?.setHighlight(highlighted);
   }, [ready, highlighted]);
 
-  // Al cambiar de piso: reconstruir desde el historial y reaplicar lo que llegó en vivo mientras tanto.
+  // Piso recargado entero → reconstruir la oficina sin animar el historial.
+  const floorRev = useOffice((s) => s.floorRev);
   useEffect(() => {
-    if (!ready) return;
-    const scene = sceneRef.current!;
-    if (!floor) {
-      scene.resetFloor([]);
-      return;
-    }
-    let cancelled = false;
-    void api
-      .sessionState(floor)
-      .then(({ events }) => {
-        if (cancelled) return;
-        scene.resetFloor(events);
-        const live = useOffice.getState().events.filter((e) => e.sessionId === floor);
-        for (const e of live.reverse()) scene.handleEvent(e);
-      })
-      .catch(() => !cancelled && scene.resetFloor([]));
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, floor]);
+    if (ready) sceneRef.current?.resetFloor(useOffice.getState().floorEvents);
+  }, [ready, floorRev]);
 
-  // Eventos en vivo.
+  // Eventos en vivo del piso (el director descarta los que ya vio).
   useEffect(() => {
     if (!ready) return;
-    let lastSeen = useOffice.getState().events[0]?.id ?? 0;
-    return useOffice.subscribe((s) => {
-      const fresh: OfficeEvent[] = [];
-      for (const e of s.events) {
-        if (e.id <= lastSeen) break;
-        fresh.push(e);
-      }
-      if (fresh.length === 0) return;
-      lastSeen = fresh[0]!.id;
-      // Al cambiar de piso, el efecto de arriba reconstruye todo; acá solo van los del piso actual.
-      for (const e of fresh.reverse()) if (e.sessionId === s.floor) sceneRef.current?.handleEvent(e);
+    return useOffice.subscribe((s, prev) => {
+      if (s.floorEvents === prev.floorEvents || s.floorRev !== prev.floorRev) return;
+      const seen = prev.floorEvents.at(-1)?.id ?? 0;
+      for (const e of s.floorEvents) if (e.id > seen) sceneRef.current?.handleEvent(e);
     });
   }, [ready]);
+
+  useEffect(() => {
+    if (ready) sceneRef.current?.setZoneOutline(selection?.type === 'zone' ? selection.zone : null);
+  }, [ready, selection]);
+
+  const showInTimeline = useCallback((agent: string) => {
+    setFilter({ ...EMPTY_FILTER, agents: [agent] });
+    setTimelineOpen(true);
+  }, []);
+
+  const pickFromTimeline = useCallback(
+    (agent: string) => {
+      select({ type: 'agent', agent });
+      sceneRef.current?.focusAgent(agent);
+    },
+    [select],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -94,33 +104,60 @@ export function OfficeView() {
   }, []);
 
   const cam = () => sceneRef.current?.camera;
+  const scene = ready ? sceneRef.current : null;
+  const openTaskData = openTaskId ? tasks[openTaskId] : undefined;
 
   return (
     <div className="office">
-      <div ref={host} className="office-canvas" aria-label="Oficina de los agentes" role="img" />
-      {highlighted && (
-        <div className="office-highlight" role="status">
-          <AgentAvatar agent={highlighted} size={18} />
-          <span>{profileFor(highlighted === 'jefe' ? null : highlighted).displayName}</span>
-          <button type="button" className="ghost" onClick={() => highlightAgent(null)}>
-            Quitar resaltado
+      <div className={`office-stage${selection ? ' with-panel' : ''}`}>
+        <div
+          ref={host}
+          className="office-canvas"
+          aria-label="Oficina de los agentes. Hacé click en un personaje o en una zona para ver su panel."
+          role="img"
+        />
+        <FloorPicker />
+        {scene && hover && !selection && <AgentTooltip scene={scene} hover={hover} />}
+        <AnimatePresence>
+          {scene && selection?.type === 'agent' && (
+            <AgentPanel key={`a-${selection.agent}`} scene={scene} agent={selection.agent} onTimeline={showInTimeline} />
+          )}
+          {scene && selection?.type === 'zone' && <ZonePanel key={`z-${selection.zone}`} scene={scene} zone={selection.zone} />}
+        </AnimatePresence>
+        {highlighted && (
+          <div className="office-highlight" role="status">
+            <AgentAvatar agent={highlighted} size={18} />
+            <span>{profileFor(highlighted === 'jefe' ? null : highlighted).displayName}</span>
+            <button type="button" className="ghost" onClick={() => highlightAgent(null)}>
+              Quitar resaltado
+            </button>
+          </div>
+        )}
+        <div className="office-controls" role="toolbar" aria-label="Cámara">
+          <button type="button" onClick={() => cam()?.zoomBy(0.8)} aria-label="Alejar">
+            −
           </button>
+          <button type="button" onClick={() => cam()?.fit(true)}>
+            Ver todo
+          </button>
+          <button type="button" onClick={() => cam()?.zoomBy(1.25)} aria-label="Acercar">
+            +
+          </button>
+          <span className={`fps${fps > 0 && fps < 50 ? ' low' : ''}`} title="Cuadros por segundo">
+            {fps} fps
+          </span>
         </div>
-      )}
-      <div className="office-controls" role="toolbar" aria-label="Cámara">
-        <button type="button" onClick={() => cam()?.zoomBy(0.8)} aria-label="Alejar">
-          −
-        </button>
-        <button type="button" onClick={() => cam()?.fit(true)}>
-          Ver todo
-        </button>
-        <button type="button" onClick={() => cam()?.zoomBy(1.25)} aria-label="Acercar">
-          +
-        </button>
-        <span className={`fps${fps > 0 && fps < 50 ? ' low' : ''}`} title="Cuadros por segundo">
-          {fps} fps
-        </span>
       </div>
+      <Timeline
+        open={timelineOpen}
+        onToggle={() => setTimelineOpen((o) => !o)}
+        filter={filter}
+        onFilter={setFilter}
+        onPickAgent={pickFromTimeline}
+      />
+      <AnimatePresence>
+        {openTaskData && <TaskDrawer key={openTaskData.id} task={openTaskData} onClose={() => openTask(null)} />}
+      </AnimatePresence>
     </div>
   );
 }

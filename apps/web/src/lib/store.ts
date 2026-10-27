@@ -4,6 +4,8 @@ import { api, connectSocket, type ConnectionState } from './api.ts';
 
 const MAX_EVENTS = 1000;
 
+export type Selection = { type: 'agent'; agent: string } | { type: 'zone'; zone: string };
+
 interface OfficeState {
   conn: ConnectionState;
   events: OfficeEvent[];
@@ -18,8 +20,17 @@ interface OfficeState {
   highlightedAgent: string | null;
   /** Sesión que muestra la oficina ("piso"). */
   floor: string | null;
+  /** true = el usuario eligió el piso a mano y no se cambia solo. */
+  floorPinned: boolean;
+  /** Eventos del piso, en orden cronológico. */
+  floorEvents: OfficeEvent[];
+  /** Se incrementa cada vez que el piso se recarga entero (la oficina se reconstruye). */
+  floorRev: number;
+  /** Panel lateral de la oficina. */
+  selection: Selection | null;
 
-  setFloor(id: string | null): void;
+  setFloor(id: string | null, pinned?: boolean): void;
+  select(sel: Selection | null): void;
   openTask(id: string | null): void;
   highlightAgent(agent: string | null): void;
   /** Aplica un cambio local antes de que confirme el server. */
@@ -36,9 +47,19 @@ export const useOffice = create<OfficeState>((set, get) => ({
   openHistory: [],
   highlightedAgent: null,
   floor: null,
+  floorPinned: false,
+  floorEvents: [],
+  floorRev: 0,
+  selection: null,
 
-  setFloor(id) {
-    set({ floor: id });
+  setFloor(id, pinned = get().floorPinned) {
+    const changed = id !== get().floor;
+    set({ floor: id, floorPinned: pinned });
+    if (changed) void loadFloor(id);
+  },
+
+  select(sel) {
+    set({ selection: sel });
   },
 
   openTask(id) {
@@ -69,9 +90,16 @@ if (import.meta.env.DEV) (window as unknown as { __store?: typeof useOffice })._
 function onMessage(msg: ServerMessage) {
   const set = useOffice.setState;
   switch (msg.type) {
-    case 'event':
-      set((s) => ({ events: [msg.event, ...s.events].slice(0, MAX_EVENTS), floor: followFloor(s, msg.event.sessionId) }));
+    case 'event': {
+      const s = useOffice.getState();
+      const floor = followFloor(s, msg.event.sessionId);
+      set({ events: [msg.event, ...s.events].slice(0, MAX_EVENTS) });
+      if (floor !== s.floor) s.setFloor(floor);
+      else if (msg.event.sessionId === floor && !s.floorEvents.some((e) => e.id === msg.event.id)) {
+        set({ floorEvents: [...s.floorEvents, msg.event].slice(-MAX_FLOOR_EVENTS) });
+      }
       break;
+    }
     case 'session':
       set((s) => ({ sessions: [msg.session, ...s.sessions.filter((x) => x.id !== msg.session.id)] }));
       break;
@@ -97,7 +125,7 @@ export function pickFloor(sessions: SessionInfo[]): string | null {
 const FLOOR_QUIET_MS = 120_000;
 
 function followFloor(s: OfficeState, sessionId: string): string | null {
-  if (s.floor === sessionId) return s.floor;
+  if (s.floor === sessionId || (s.floorPinned && s.floor)) return s.floor;
   const current = s.sessions.find((x) => x.id === s.floor);
   return !current || current.endedAt !== null || Date.now() - current.lastEventAt > FLOOR_QUIET_MS ? sessionId : s.floor;
 }
@@ -108,13 +136,36 @@ function mergeHistory(current: TaskHistoryEntry[], incoming: TaskHistoryEntry[])
   return [...byId.values()].sort((a, b) => a.at - b.at || a.id - b.id);
 }
 
+const MAX_FLOOR_EVENTS = 5000;
+let floorRequest = 0;
+
+/** Trae el historial del piso y le suma lo que llegó en vivo mientras tanto. */
+async function loadFloor(id: string | null) {
+  const req = ++floorRequest;
+  if (!id) {
+    useOffice.setState((s) => ({ floorEvents: [], floorRev: s.floorRev + 1 }));
+    return;
+  }
+  useOffice.setState({ floorEvents: [] });
+  const events = await api
+    .sessionState(id)
+    .then((r) => r.events)
+    .catch(() => [] as OfficeEvent[]);
+  if (req !== floorRequest) return;
+  useOffice.setState((s) => {
+    const max = events.reduce((m, e) => Math.max(m, e.id), 0);
+    const live = s.floorEvents.filter((e) => e.sessionId === id && e.id > max);
+    return { floorEvents: [...events, ...live].slice(-MAX_FLOOR_EVENTS), floorRev: s.floorRev + 1 };
+  });
+}
+
 async function loadSnapshot() {
   const [tasks, sessions] = await Promise.all([api.tasks(), api.sessions()]);
-  useOffice.setState((s) => ({
-    tasks: Object.fromEntries(tasks.map((t) => [t.id, t])),
-    sessions,
-    floor: s.floor ?? pickFloor(sessions),
-  }));
+  const { floor, setFloor } = useOffice.getState();
+  useOffice.setState({ tasks: Object.fromEntries(tasks.map((t) => [t.id, t])), sessions });
+  // Al reconectar se recarga el piso entero por si se perdieron eventos.
+  if (floor) void loadFloor(floor);
+  else setFloor(pickFloor(sessions));
 }
 
 let started = false;
