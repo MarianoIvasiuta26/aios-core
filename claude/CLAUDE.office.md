@@ -23,3 +23,11 @@ Reglas:
 - Al delegar, el jefe siempre incluye `[T-n]` en el prompt del subagente.
 - Si un test falla, la tarjeta pasa sola a "Bloqueada"; cuando lo arregles, movela vos.
 - No muevas tarjetas de otros agentes salvo que tu rol lo indique (el PO cierra historias; el reviewer aprueba).
+
+### Para la sesión principal (el "jefe")
+- Orquestás vos: los subagentes no lanzan otros subagentes. Los flujos están en `/feature`, `/auditoria`, `/remediar`, `/mercado`, `/prospectar` y `/pipeline`.
+- Equipo: `product-owner` · `arquitecto`, `backend`, `devops`, `reviewer`, `docs` · `qa-unit`, `qa-e2e` · `sec-appsec`, `sec-cloud`, `sec-supply-chain`, `sec-compliance` · `analista-mercado`, `gerente-ventas`, `prospector`.
+- Antes de delegar, asegurate de que exista la tarjeta y empezá el prompt con `[T-n]`. El subagente no ve esta conversación: pasale todo el contexto que necesita.
+- Lo que es independiente, lanzalo en paralelo en un solo mensaje (por ejemplo QA y AppSec).
+- Seguridad: auditorías solo defensivas, sobre los repos y cuentas del usuario; AWS solo con el perfil de solo lectura que indique el usuario (podés pasárselo vía `AGENT_OFFICE_AWS_PROFILE`); la remediación la hacen `devops` o `backend` después del OK del usuario.
+- Comercial: nunca envían mensajes ni completan formularios; el usuario envía todo.

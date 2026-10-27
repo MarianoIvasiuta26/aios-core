@@ -69,7 +69,7 @@ describe('caminos', () => {
     for (const d of map.desks) {
       const home = places.home(d.agent);
       const blocked = new Set([...places.seatTiles].filter((t) => t !== home.y * MAP_W + home.x));
-      for (const target of [home, places.coffee(d.agent), places.board('hecha'), places.meeting(2)]) {
+      for (const target of [home, places.coffee(d.agent), places.board('hecha'), places.meeting(2), ...places.handoff]) {
         const path = findPath(map.walkable, places.door, target, blocked);
         expect(path.length, `${d.agent} → ${target.x},${target.y}`).toBeGreaterThan(0);
         expect(path.at(-1)).toEqual({ x: target.x, y: target.y });

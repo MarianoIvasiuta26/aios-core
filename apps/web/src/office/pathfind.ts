@@ -112,6 +112,11 @@ export function createPlaces(map: OfficeMap) {
     },
     door: { ...map.pois.entrance, facing: 'down' as Facing },
     bossIdle: { x: 7, y: 11, facing: 'down' as Facing },
+    /** Dónde se pasan la posta dos agentes en la sala de reuniones (mirándose). */
+    handoff: [
+      { x: 19, y: 10, facing: 'right' as Facing },
+      { x: 24, y: 10, facing: 'left' as Facing },
+    ] as const,
     /** Puerta de la oficina del jefe: ahí se le reporta. */
     bossDoor: { ...map.pois.bossDoor, facing: 'up' as Facing },
   };

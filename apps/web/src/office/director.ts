@@ -22,6 +22,8 @@ interface AgentState {
 /** Si se acumulan más actividades que esto, se saltean las intermedias para no quedar atrasados. */
 const MAX_QUEUE = 3;
 const THINKING: Activity = { kind: 'thinking', detail: null };
+/** Si un agente arranca hasta este tiempo después de que otro terminó, se encuentran en la sala de reuniones. */
+const HANDOFF_WINDOW_MS = 60_000;
 
 /**
  * Traduce eventos en planes para los actores: entrar por la puerta, ir al escritorio, mostrar cada
@@ -31,6 +33,8 @@ export class Director {
   private readonly agents = new Map<string, AgentState>();
   private lastEventId = 0;
   private sessionEnded = false;
+  /** El último que terminó su parte, candidato a pasarle la posta al próximo que entre. */
+  private lastFinish: { st: AgentState; at: number } | null = null;
 
   constructor(
     actors: Actor[],
@@ -127,7 +131,7 @@ export class Director {
     if (e.kind === 'session_start' && it.agent === BOSS_ID) this.sessionEnded = false;
 
     if (it.presence === 'enter') {
-      this.enter(st);
+      this.enter(st, e.kind === 'agent_start');
       return;
     }
     if (it.presence === 'finish') {
@@ -172,7 +176,8 @@ export class Director {
     ];
   }
 
-  private enter(st: AgentState) {
+  private enter(st: AgentState, launched = false) {
+    const from = launched ? this.takeHandoff(st) : null;
     st.finished = false;
     st.idle = false;
     st.current = THINKING;
@@ -181,7 +186,53 @@ export class Director {
     st.where = 'elsewhere';
     st.actor.clearEffects();
     this.screen(st, 'idle');
-    st.actor.setPlan(this.home(st));
+    if (from) this.handoff(from, st);
+    else st.actor.setPlan(this.home(st));
+  }
+
+  private takeHandoff(st: AgentState): AgentState | null {
+    const last = this.lastFinish;
+    this.lastFinish = null;
+    if (!last || last.st === st || this.now() - last.at > HANDOFF_WINDOW_MS) return null;
+    return last.st.finished && last.st.actor.visible && st.where === 'away' ? last.st : null;
+  }
+
+  /** El que terminó y el que entra se cruzan en la sala de reuniones y cada uno sigue a lo suyo. */
+  private handoff(from: AgentState, to: AgentState) {
+    const [spotFrom, spotTo] = this.places.handoff;
+    from.where = 'elsewhere';
+    from.actor.setPlan([{ type: 'walk', to: spotFrom }, { type: 'wait', ms: 3_600_000 }]);
+    to.actor.setPlan([
+      { type: 'walk', to: spotTo },
+      {
+        type: 'run',
+        fn: () => {
+          if (from.finished) from.actor.bubbleText('Te paso la posta');
+          to.actor.bubbleText('¡Dale!');
+        },
+      },
+      { type: 'wait', ms: 1600 },
+      {
+        type: 'run',
+        fn: () => {
+          to.actor.bubbleText(null);
+          if (from.finished) {
+            from.actor.bubbleText(null);
+            this.toCafe(from);
+          }
+        },
+      },
+      ...this.walkHome(to),
+    ]);
+  }
+
+  private toCafe(st: AgentState) {
+    st.where = 'elsewhere';
+    st.actor.setPlan([
+      { type: 'walk', to: this.places.coffee(st.actor.agent) },
+      { type: 'run', fn: () => (st.where = 'cafe') },
+      { type: 'wait', ms: 3_600_000, pose: 'cup' },
+    ]);
   }
 
   private finish(st: AgentState) {
@@ -194,7 +245,8 @@ export class Director {
       return;
     }
     st.where = 'elsewhere';
-    // Festeja en su lugar, le reporta al jefe y se va al café.
+    this.lastFinish = { st, at: this.now() };
+    // Festeja en su lugar, le reporta al jefe y se va al café (salvo que entre alguien y le pase la posta).
     st.actor.setPlan([
       { type: 'run', fn: () => st.actor.cheer() },
       { type: 'wait', ms: 1300 },
