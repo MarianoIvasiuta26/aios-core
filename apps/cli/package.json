@@ -1,0 +1,8 @@
+{
+  "name": "@office/cli",
+  "private": true,
+  "type": "module",
+  "bin": { "office-task": "./bin/office-task" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": { "@office/shared": "workspace:*" }
+}

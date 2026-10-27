@@ -1,11 +1,14 @@
-import type { OfficeEvent, ServerMessage, SessionInfo } from '@office/shared';
+import type { NewTask, OfficeEvent, ServerMessage, SessionInfo, Task, TaskHistoryEntry, TaskPatch } from '@office/shared';
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
     headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -15,6 +18,12 @@ export const api = {
   demoStatus: () => json<{ running: boolean; sessionId: string | null }>('/demo'),
   demoStart: (speed = 1) => json<{ sessionId: string }>('/demo/start', { method: 'POST', body: JSON.stringify({ speed }) }),
   demoStop: () => json<{ running: boolean }>('/demo/stop', { method: 'POST', body: '{}' }),
+  tasks: () => json<Task[]>('/tasks'),
+  task: (id: string) => json<{ task: Task; history: TaskHistoryEntry[] }>(`/tasks/${id}`),
+  createTask: (t: NewTask) => json<Task>('/tasks', { method: 'POST', body: JSON.stringify(t) }),
+  updateTask: (id: string, patch: TaskPatch) => json<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  comment: (id: string, text: string) =>
+    json<TaskHistoryEntry>(`/tasks/${id}/comments`, { method: 'POST', body: JSON.stringify({ text }) }),
 };
 
 export type ConnectionState = 'connecting' | 'open' | 'closed';

@@ -1,4 +1,5 @@
 import type { Team } from './agents.ts';
+import type { Column, Task, TaskHistoryEntry } from './tasks.ts';
 
 export const EVENT_KINDS = [
   'session_start',
@@ -47,7 +48,9 @@ export interface OfficeEvent {
 export type ServerMessage =
   | { type: 'hello'; serverTime: number }
   | { type: 'event'; event: OfficeEvent }
-  | { type: 'session'; session: SessionInfo };
+  | { type: 'session'; session: SessionInfo }
+  | { type: 'task_upsert'; task: Task; entries: TaskHistoryEntry[] }
+  | { type: 'task_moved'; taskId: string; from: Column; to: Column; by: string };
 
 export interface SessionInfo {
   id: string;

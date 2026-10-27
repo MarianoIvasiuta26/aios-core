@@ -214,6 +214,20 @@ export function openDb(file: string) {
         )
         .all(sessionId) as AgentRun[];
     },
+    getRun(agentId: string): AgentRun | null {
+      return (
+        (db
+          .prepare(
+            `SELECT agent_id agentId, session_id sessionId, agent_name agentName, agent_type agentType, task_id taskId,
+                    started_at startedAt, ended_at endedAt, tool_calls toolCalls, errors
+             FROM agent_runs WHERE agent_id = ?`,
+          )
+          .get(agentId) as AgentRun | undefined) ?? null
+      );
+    },
+    setRunTask(agentId: string, taskId: string) {
+      db.prepare('UPDATE agent_runs SET task_id = ? WHERE agent_id = ?').run(taskId, agentId);
+    },
     deleteSession(id: string) {
       db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     },

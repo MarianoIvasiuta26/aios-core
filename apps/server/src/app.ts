@@ -8,10 +8,13 @@ import { hookPayloadSchema } from './normalize.ts';
 import { createDemo } from './demo.ts';
 import type { OfficeDb } from './db.ts';
 import type { Ingest } from './ingest.ts';
+import { createTaskStore, type TaskStore } from './tasks.ts';
+import { registerTaskRoutes } from './task-routes.ts';
+import { createAutomations } from './automations.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    office: { db: OfficeDb; ingest: Ingest; demo: ReturnType<typeof createDemo> };
+    office: { db: OfficeDb; ingest: Ingest; tasks: TaskStore; demo: ReturnType<typeof createDemo> };
   }
 }
 
@@ -32,8 +35,13 @@ export async function buildApp(opts: AppOptions) {
     for (const ws of clients) if (ws.readyState === ws.OPEN) ws.send(data);
   };
   const ingest = createIngest(db, broadcast, opts.reorderWindowMs);
-  const demo = createDemo(ingest);
-  app.decorate('office', { db, ingest, demo });
+  const tasks = createTaskStore(db.raw, ({ task, entries, moved }) => {
+    broadcast({ type: 'task_upsert', task, entries });
+    if (moved) broadcast({ type: 'task_moved', taskId: task.id, ...moved });
+  });
+  ingest.onEvent(createAutomations(db, tasks));
+  const demo = createDemo(ingest, tasks);
+  app.decorate('office', { db, ingest, tasks, demo });
 
   app.addHook('onClose', async () => {
     demo.stop();
@@ -65,6 +73,8 @@ export async function buildApp(opts: AppOptions) {
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
     return db.agentHistory(req.params.id, limit);
   });
+
+  registerTaskRoutes(app, tasks);
 
   app.get('/demo', async () => demo.status);
   app.post<{ Body: { speed?: number } | undefined }>('/demo/start', async (req) => ({

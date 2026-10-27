@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AGENTS, profileFor, type OfficeEvent, type SessionInfo } from '@office/shared';
-import { api, connectSocket, type ConnectionState } from '../lib/api.ts';
-
-const MAX_EVENTS = 400;
+import { useMemo, useState } from 'react';
+import { AGENTS, profileFor, type OfficeEvent } from '@office/shared';
+import { useOffice } from '../lib/store.ts';
 const COLORS = new Map(AGENTS.map((a) => [a.id, a.color]));
 
 const STATUS_ICON: Record<OfficeEvent['status'], string> = {
@@ -17,24 +15,11 @@ function time(ts: number) {
   return new Date(ts).toLocaleTimeString('es-AR', { hour12: false });
 }
 
-/** Vista de diagnóstico de la fase 1: eventos crudos por WebSocket. */
+/** Vista de diagnóstico: eventos normalizados tal como llegan por WebSocket. */
 export function DebugPage() {
-  const [conn, setConn] = useState<ConnectionState>('connecting');
-  const [events, setEvents] = useState<OfficeEvent[]>([]);
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [demo, setDemo] = useState<{ running: boolean; sessionId: string | null }>({ running: false, sessionId: null });
+  const events = useOffice((s) => s.events);
+  const sessions = useOffice((s) => s.sessions);
   const [filter, setFilter] = useState('');
-
-  useEffect(() => {
-    void api.sessions().then(setSessions).catch(() => {});
-    void api.demoStatus().then(setDemo).catch(() => {});
-    return connectSocket((msg) => {
-      if (msg.type === 'event') setEvents((prev) => [msg.event, ...prev].slice(0, MAX_EVENTS));
-      if (msg.type === 'session') {
-        setSessions((prev) => [msg.session, ...prev.filter((s) => s.id !== msg.session.id)]);
-      }
-    }, setConn);
-  }, []);
 
   const visible = useMemo(() => {
     const f = filter.trim().toLowerCase();
@@ -42,17 +27,10 @@ export function DebugPage() {
     return events.filter((e) => `${e.agentName} ${e.kind} ${e.tool ?? ''} ${e.summary}`.toLowerCase().includes(f));
   }, [events, filter]);
 
-  const toggleDemo = async () => {
-    if (demo.running) setDemo({ ...(await api.demoStop()), sessionId: null });
-    else setDemo({ running: true, sessionId: (await api.demoStart(1)).sessionId });
-  };
-
   return (
     <div className="debug">
       <header>
-        <h1>Agent Office · diagnóstico</h1>
-        <span className={`conn conn-${conn}`}>WebSocket: {conn}</span>
-        <button onClick={() => void toggleDemo()}>{demo.running ? 'Detener demo' : 'Iniciar demo'}</button>
+        <h1>Eventos en vivo</h1>
         <input placeholder="Filtrar…" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <span className="muted">{events.length} eventos recibidos</span>
       </header>

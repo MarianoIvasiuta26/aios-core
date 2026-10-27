@@ -1,0 +1,135 @@
+.board-page { display: flex; flex-direction: column; height: 100%; }
+
+.toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--wall);
+}
+.toolbar .search { width: 220px; }
+.toolbar .new { margin-left: auto; }
+.error.banner { margin: 0; padding: 8px 16px; background: #3a1f25; }
+
+/* La pared: columnas pintadas, tarjetas de papel pinchadas */
+.wall {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: repeat(6, minmax(184px, 1fr)); gap: 12px;
+  padding: 16px; overflow-x: auto;
+  background:
+    radial-gradient(ellipse at 50% -20%, #2a3753 0%, transparent 60%),
+    var(--night);
+}
+.column {
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--wall); border: 1px solid var(--line); border-radius: 10px;
+  transition: border-color 120ms, background 120ms;
+}
+.column.over { border-color: var(--gold); background: var(--wall-2); }
+.column > header { display: flex; align-items: baseline; gap: 8px; padding: 12px 14px 8px; }
+.column h2 { font-family: var(--font-pixel); font-weight: 500; font-size: 18px; margin: 0; letter-spacing: 0.02em; }
+.column .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.col-bloqueada { background: #2a1d27; }
+.col-bloqueada h2 { color: var(--err); }
+.col-en-curso h2 { color: var(--gold); }
+.col-hecha .card { filter: saturate(0.4); opacity: 0.8; }
+
+.cards {
+  list-style: none; margin: 0; padding: 6px 10px 14px;
+  display: flex; flex-direction: column; gap: 12px;
+  flex: 1; min-height: 80px; overflow-y: auto;
+}
+.cards .empty { color: var(--muted); font-size: 13px; padding: 8px 4px; }
+.card-slot { touch-action: none; border-radius: 4px; }
+.card-slot:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.card-slot.dragging { opacity: 0.25; }
+
+.card {
+  position: relative; cursor: grab;
+  background: var(--paper); color: var(--ink);
+  border-radius: 3px; padding: 18px 12px 10px;
+  border-bottom: 2px solid var(--paper-edge);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 6px 14px -8px rgba(0, 0, 0, 0.6);
+  transform: rotate(var(--tilt, 0deg));
+  transition: transform 160ms, box-shadow 160ms;
+}
+.card:hover { transform: rotate(0deg) translateY(-1px); }
+.card.lifted { cursor: grabbing; transform: rotate(-2deg) scale(1.03); box-shadow: 0 18px 30px -12px rgba(0, 0, 0, 0.7); }
+.card.open { box-shadow: 0 0 0 2px var(--gold), 0 6px 14px -8px rgba(0, 0, 0, 0.6); }
+
+/* Cinta washi con la prioridad */
+.tape {
+  position: absolute; top: -7px; left: 50%; transform: translateX(-50%) rotate(-2deg);
+  width: 64px; height: 18px; display: grid; place-items: center;
+  font-family: var(--font-pixel); font-size: 12px; color: rgba(20, 20, 20, 0.75);
+  background: var(--tape); opacity: 0.92;
+  clip-path: polygon(3% 0, 97% 4%, 100% 50%, 96% 100%, 2% 96%, 0 50%);
+}
+.prio-P0 { --tape: var(--p0); }
+.prio-P1 { --tape: var(--p1); }
+.prio-P2 { --tape: var(--p2); }
+.prio-P3 { --tape: var(--p3); }
+.prio-P0 .tape { color: #fff; }
+
+.card-id { display: flex; gap: 8px; font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.card-id .related { margin-left: auto; }
+.card-title { margin: 4px 0 8px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.labels { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; margin: 0 0 8px; padding: 0; }
+.labels li { font-size: 12px; padding: 0 6px; border-radius: 3px; background: #e6dcc6; color: var(--ink-soft); }
+.card-who { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-soft); }
+.avatar { flex: none; image-rendering: pixelated; }
+.avatar-empty { color: var(--ink-soft); }
+
+/* Destello cuando un agente o la CLI cambia la tarjeta */
+.card .flash {
+  position: absolute; inset: -3px; border-radius: 5px; pointer-events: none;
+  box-shadow: 0 0 0 3px var(--gold); animation: flash 1.4s ease-out forwards;
+}
+@keyframes flash { from { opacity: 1; } to { opacity: 0; } }
+
+/* Diálogo y panel lateral */
+.scrim { position: fixed; inset: 0; background: rgba(6, 9, 15, 0.55); z-index: 10; }
+.dialog {
+  position: fixed; z-index: 11; top: 8vh; left: 50%; translate: -50% 0;
+  width: min(560px, calc(100vw - 32px)); max-height: 84vh; overflow: auto;
+  background: var(--wall); border: 1px solid var(--line); border-radius: 12px; padding: 20px;
+}
+.dialog h2, .drawer h2 { font-family: var(--font-pixel); font-weight: 500; margin: 0 0 12px; }
+.drawer {
+  position: fixed; z-index: 11; top: 0; right: 0; bottom: 0; width: min(460px, 100vw);
+  overflow-y: auto; background: var(--wall); border-left: 1px solid var(--line); padding: 16px 20px 32px;
+}
+.drawer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.drawer-head h2 { margin: 0; }
+.drawer-head .ghost { margin-left: auto; }
+.tape-inline {
+  font-family: var(--font-pixel); font-size: 12px; padding: 1px 10px; color: var(--ink);
+  background: var(--tape); clip-path: polygon(4% 0, 100% 6%, 96% 100%, 0 94%);
+}
+
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.fields input, .fields select, .fields textarea { color: var(--text); font-size: 15px; }
+.fields .span-2 { grid-column: span 2; }
+.fields textarea { resize: vertical; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.dates { display: flex; gap: 20px; margin: 20px 0; font-size: 13px; }
+.dates dt { color: var(--muted); }
+.dates dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.history h3 { font-size: 15px; margin: 0 0 8px; }
+.history ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.history li { display: grid; grid-template-columns: 16px 1fr; gap: 8px; font-size: 14px; }
+.history li .avatar { margin-top: 3px; }
+.history p { margin: 0; }
+.history .detail { color: var(--muted); }
+.history time { font-size: 12px; color: var(--muted); }
+.comment { display: flex; gap: 8px; margin-top: 16px; }
+.comment input { flex: 1; }
+
+@media (max-width: 700px) {
+  .toolbar .search { width: 100%; }
+  .toolbar .new { margin-left: 0; }
+  .wall { grid-template-columns: repeat(6, 82vw); scroll-snap-type: x mandatory; }
+  .column { scroll-snap-align: start; }
+  .fields { grid-template-columns: 1fr; }
+  .fields .span-2 { grid-column: auto; }
+}

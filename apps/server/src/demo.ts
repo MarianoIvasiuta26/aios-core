@@ -1,18 +1,32 @@
+import type { Column, NewTask } from '@office/shared';
 import type { HookPayload } from './normalize.ts';
 import type { Ingest } from './ingest.ts';
+import type { TaskStore } from './tasks.ts';
 
 /**
  * Modo demo: genera payloads con el MISMO formato que mandan los hooks de Claude Code
  * y los pasa por el mismo normalizador, para probar la UI sin Claude Code corriendo.
+ * Las llamadas a `office-task` también impactan el tablero real, como lo haría la CLI.
+ *
+ * En prompts y comandos, `{ref}` se reemplaza por el id real de la tarjeta (`T-n`) al emitirse.
  */
 
 const CWD = '/home/demo/proyecto-demo';
 
-type Step = [tool: string, input: Record<string, unknown>, durationMs: number, error?: string];
+/** Acciones de tablero disponibles para un paso; `ref` es un nombre local del guion. */
+interface Board {
+  create(ref: string, task: NewTask): void;
+  move(ref: string, column: Column): void;
+}
+type Effect = (board: Board) => void;
+
+type Step = [tool: string, input: Record<string, unknown>, durationMs: number, error?: string, effect?: Effect];
 
 interface Scheduled {
   at: number;
   payload: HookPayload;
+  /** Efecto en el tablero; corre justo antes de emitir el PostToolUse, como haría la CLI real. */
+  effect?: { run: Effect; actor: string };
 }
 
 let seq = 0;
@@ -22,14 +36,15 @@ class Script {
   items: Scheduled[] = [];
   constructor(readonly sessionId: string) {}
 
-  emit(at: number, payload: Omit<HookPayload, 'session_id' | 'cwd'>) {
-    this.items.push({ at, payload: { session_id: this.sessionId, cwd: CWD, ...payload } as HookPayload });
+  emit(at: number, payload: Omit<HookPayload, 'session_id' | 'cwd'>, effect?: Scheduled['effect']) {
+    this.items.push({ at, payload: { session_id: this.sessionId, cwd: CWD, ...payload } as HookPayload, effect });
   }
 
   /** Ejecuta pasos de herramientas en serie; devuelve el instante en que termina. */
   tools(start: number, steps: Step[], agent?: { id: string; type: string }): number {
     let t = start;
-    for (const [tool, input, dur, error] of steps) {
+    const actor = agent?.type ?? 'jefe';
+    for (const [tool, input, dur, error, effect] of steps) {
       const tool_use_id = uid('toolu');
       const who = agent ? { agent_id: agent.id, agent_type: agent.type } : {};
       this.emit(t, { hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id, ...who });
@@ -37,15 +52,11 @@ class Script {
       if (error) {
         this.emit(t, { hook_event_name: 'PostToolUseFailure', tool_name: tool, tool_input: input, tool_use_id, error, ...who });
       } else {
-        this.emit(t, {
-          hook_event_name: 'PostToolUse',
-          tool_name: tool,
-          tool_input: input,
-          tool_response: {},
-          tool_use_id,
-          duration_ms: dur,
-          ...who,
-        });
+        this.emit(
+          t,
+          { hook_event_name: 'PostToolUse', tool_name: tool, tool_input: input, tool_response: {}, tool_use_id, duration_ms: dur, ...who },
+          effect ? { run: effect, actor } : undefined,
+        );
       }
       t += 500 + Math.round(Math.random() * 900);
     }
@@ -93,25 +104,49 @@ const glob = (pattern: string, d = 500): Step => ['Glob', { pattern }, d];
 const search = (query: string, d = 2500): Step => ['WebSearch', { query }, d];
 const fetch = (url: string, d = 2200): Step => ['WebFetch', { url, prompt: 'resumir' }, d];
 
+/** `office-task create` que además crea la tarjeta (o varias) en el tablero. */
+const createTasks = (tasks: Record<string, NewTask>, d = 900): Step => [
+  'Bash',
+  { command: Object.values(tasks).map((t) => `office-task create "${t.title}" --prio ${t.priority ?? 'P2'}`).join(' && ') },
+  d,
+  undefined,
+  (b) => Object.entries(tasks).forEach(([ref, t]) => b.create(ref, t)),
+];
+/** `office-task move` que además mueve la tarjeta. */
+const moveTask = (ref: string, column: Column, d = 700): Step => [
+  'Bash',
+  { command: `office-task move {${ref}} ${column}` },
+  d,
+  undefined,
+  (b) => b.move(ref, column),
+];
+
 function feature(s: Script, t0: number): number {
   s.emit(t0, { hook_event_name: 'UserPromptSubmit', prompt: '/feature Login con Google para el panel de clientes' });
   let t = s.tools(t0 + 800, [read('docs/BACKLOG.md', 600)]);
-  t = s.delegate(t, 'product-owner', 'Historia de login con Google', '[T-101] Escribí la historia y criterios', [
+  t = s.delegate(t, 'product-owner', 'Historia de login con Google', 'Escribí la historia, criterios y tarjetas', [
     read('docs/BACKLOG.md'),
     read('docs/ROADMAP.md'),
     edit('docs/BACKLOG.md', 3000),
-    bash('office-task create "HU-12 Login con Google" --team producto --prio P1 --as product-owner', 900),
-    bash('office-task move T-101 en-curso --as product-owner', 700),
+    createTasks({
+      hu: { title: 'HU-12 Login con Google', assignee: 'product-owner', priority: 'P1', related: 'HU-12', labels: ['auth'], column: 'en-curso' },
+      design: { title: 'Diseño técnico OAuth', assignee: 'arquitecto', priority: 'P1', related: 'HU-12', labels: ['auth', 'diseño'], column: 'por-hacer' },
+      impl: { title: 'Implementar callback OAuth en Go', assignee: 'backend', priority: 'P1', related: 'HU-12', labels: ['auth', 'go'], column: 'por-hacer' },
+      unit: { title: 'Tests unitarios del login', assignee: 'qa-unit', priority: 'P2', related: 'HU-12', labels: ['tests'], column: 'por-hacer' },
+      e2e: { title: 'E2E del login con Playwright', assignee: 'qa-e2e', priority: 'P2', related: 'HU-12', labels: ['tests', 'e2e'], column: 'por-hacer' },
+      sec: { title: 'AppSec del flujo OAuth', assignee: 'sec-appsec', priority: 'P1', related: 'HU-12', labels: ['seguridad'], column: 'por-hacer' },
+    }, 1500),
   ]);
-  t = s.delegate(t, 'arquitecto', 'Diseño técnico OAuth', '[T-102] Proponé el diseño', [
+  t = s.delegate(t, 'arquitecto', 'Diseño técnico OAuth', '[{design}] Proponé el diseño', [
     glob('internal/**/*.go'),
     grep('func .*Auth'),
     read('internal/auth/session.go'),
     read('cmd/api/main.go'),
+    moveTask('design', 'hecha'),
   ]);
   s.emit(t, { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude necesita permiso para usar Bash' });
   t += 3500;
-  t = s.delegate(t, 'backend', 'Implementar login con Google', '[T-103] Implementá el diseño', [
+  t = s.delegate(t, 'backend', 'Implementar login con Google', '[{impl}] Implementá el diseño', [
     read('internal/auth/session.go'),
     write('internal/auth/google.go', 3500),
     edit('internal/api/routes.go'),
@@ -119,36 +154,41 @@ function feature(s: Script, t0: number): number {
     bash('go build ./...', 2500),
     bash('gofmt -l . && golangci-lint run', 3000),
     bash("curl -s -H 'Authorization: Bearer ya29a0AfB_byC7xQk2Lm9Pz4Rt8Uv1Ws3Yn6Hj0Kd5' localhost:8080/me", 900),
+    moveTask('impl', 'en-revision'),
   ]);
   t = s.parallel(t, [
-    ['qa-unit', 'Tests unitarios OAuth', '[T-104] Tests', [
+    ['qa-unit', 'Tests unitarios OAuth', '[{unit}] Tests', [
       write('internal/auth/google_test.go', 3000),
       bash('go test -race ./internal/auth/...', 4000, 'Exit code 1\n--- FAIL: TestGoogleCallback/state_invalido'),
-      edit('internal/auth/google_test.go'),
+      edit('internal/auth/google_test.go', 3500),
       bash('go test -race ./internal/auth/...', 3500),
       write('docs/qa/REPORTE-2026-10-27.md', 1500),
+      moveTask('unit', 'hecha'),
     ]],
-    ['qa-e2e', 'E2E del login', '[T-105] Playwright', [
+    ['qa-e2e', 'E2E del login', '[{e2e}] Playwright', [
       read('docs/BACKLOG.md'),
       write('e2e/login-google.spec.ts', 3000),
       bash('pnpm exec playwright test e2e/login-google.spec.ts', 6000),
+      moveTask('e2e', 'hecha'),
     ]],
-    ['sec-appsec', 'Auditoría AppSec del cambio', '[T-106] AppSec', [
+    ['sec-appsec', 'Auditoría AppSec del cambio', '[{sec}] AppSec', [
       bash('semgrep scan --config auto internal/auth', 5000),
       bash('gosec ./internal/...', 3500),
       bash('govulncheck ./...', 3000),
       write('docs/security/AUDITORIA-2026-10-27.md', 2000),
+      moveTask('sec', 'hecha'),
     ]],
   ]);
-  t = s.delegate(t, 'reviewer', 'Revisión del diff', '[T-107] Revisá el diff', [
+  t = s.delegate(t, 'reviewer', 'Revisión del diff', 'Revisá el diff de [{impl}]', [
     bash('git diff main...HEAD --stat', 900),
     read('internal/auth/google.go', 1500),
     read('internal/api/routes.go'),
+    moveTask('impl', 'hecha'),
   ]);
-  t = s.delegate(t, 'product-owner', 'Validar criterios de aceptación', '[T-101] Validá y cerrá', [
+  t = s.delegate(t, 'product-owner', 'Validar criterios de aceptación', 'Validá los criterios de [{hu}]', [
     read('docs/qa/REPORTE-2026-10-27.md'),
     edit('docs/BACKLOG.md'),
-    bash('office-task move T-101 hecha --as product-owner', 700),
+    moveTask('hu', 'hecha'),
   ]);
   s.emit(t, { hook_event_name: 'Stop', stop_hook_active: false });
   return t + 3000;
@@ -156,29 +196,41 @@ function feature(s: Script, t0: number): number {
 
 function auditoria(s: Script, t0: number): number {
   s.emit(t0, { hook_event_name: 'UserPromptSubmit', prompt: '/auditoria completa' });
-  let t = s.parallel(t0 + 1500, [
-    ['sec-appsec', 'Auditoría de aplicación', '[T-110] AppSec', [
+  let t = s.tools(t0 + 800, [
+    createTasks({
+      app: { title: 'Auditoría AppSec', assignee: 'sec-appsec', priority: 'P1', labels: ['auditoría'], column: 'por-hacer' },
+      cloud: { title: 'Auditoría cloud AWS + Terraform', assignee: 'sec-cloud', priority: 'P1', labels: ['auditoría', 'aws'], column: 'por-hacer' },
+      supply: { title: 'Auditoría supply chain', assignee: 'sec-supply-chain', priority: 'P1', labels: ['auditoría'], column: 'por-hacer' },
+      report: { title: 'Informe ejecutivo de seguridad', assignee: 'sec-compliance', priority: 'P2', labels: ['auditoría', 'informe'], column: 'backlog' },
+    }),
+  ]);
+  t = s.parallel(t, [
+    ['sec-appsec', 'Auditoría de aplicación', '[{app}] AppSec', [
       bash('semgrep scan --config p/owasp-top-ten .', 5000),
       bash('composer audit', 2000),
       bash('npm audit --json', 2000),
       grep('password|secret'),
+      moveTask('app', 'hecha'),
     ]],
-    ['sec-cloud', 'Auditoría cloud', '[T-111] Cloud', [
+    ['sec-cloud', 'Auditoría cloud', '[{cloud}] Cloud', [
       bash('checkov -d infra/terraform', 5000),
       bash('trivy config infra/terraform', 4000),
       bash('prowler aws --profile auditoria-ro -M json-ocsf', 8000),
+      moveTask('cloud', 'hecha'),
     ]],
-    ['sec-supply-chain', 'Cadena de suministro', '[T-112] Supply chain', [
+    ['sec-supply-chain', 'Cadena de suministro', '[{supply}] Supply chain', [
       bash('gitleaks detect --redact -v', 4000),
       bash('trivy image registry.gitlab.com/demo/api:1.4.2', 5000),
       bash('syft dir:. -o cyclonedx-json > sbom.json', 3000),
       read('.gitlab-ci.yml'),
+      moveTask('supply', 'hecha'),
     ]],
   ]);
-  t = s.delegate(t, 'sec-compliance', 'Consolidar informe', '[T-113] Consolidá', [
+  t = s.delegate(t, 'sec-compliance', 'Consolidar informe', '[{report}] Consolidá', [
     read('docs/security/AUDITORIA-2026-10-27.md'),
     write('docs/security/hallazgos.json', 2500),
     write('docs/security/INFORME-EJECUTIVO-2026-10-27.md', 3500),
+    moveTask('report', 'en-revision'),
   ]);
   s.emit(t, { hook_event_name: 'Stop', stop_hook_active: false });
   return t + 3000;
@@ -186,50 +238,82 @@ function auditoria(s: Script, t0: number): number {
 
 function comercial(s: Script, t0: number): number {
   s.emit(t0, { hook_event_name: 'UserPromptSubmit', prompt: '/prospectar fintech Argentina' });
-  let t = s.delegate(t0 + 1500, 'analista-mercado', 'Investigar mercado fintech', '[T-120] Mercado', [
+  let t = s.tools(t0 + 800, [
+    createTasks({
+      market: { title: 'Investigar mercado fintech AR', assignee: 'analista-mercado', priority: 'P2', labels: ['mercado'], column: 'por-hacer' },
+      leads: { title: 'Prospectar fintech AR', assignee: 'prospector', priority: 'P2', labels: ['leads'], column: 'backlog' },
+    }),
+  ]);
+  t = s.delegate(t, 'analista-mercado', 'Investigar mercado fintech', '[{market}] Mercado', [
     search('fintech Argentina 2026 demanda desarrollo backend Go'),
     fetch('https://www.example.org/informe-fintech-2026'),
     search('licitaciones públicas desarrollo software 2026'),
     write('comercial/mercado/INFORME-fintech-2026-10-27.md', 3000),
     edit('comercial/mercado/oportunidades.json'),
+    moveTask('market', 'hecha'),
   ]);
-  t = s.delegate(t, 'gerente-ventas', 'Elegir segmento', '[T-121] Segmento', [
+  t = s.delegate(t, 'gerente-ventas', 'Elegir segmento', 'Elegí el segmento para [{leads}]', [
     read('comercial/mercado/oportunidades.json'),
     read('comercial/PERFIL-CLIENTE.md'),
     edit('comercial/ESTRATEGIA.md'),
   ]);
-  t = s.delegate(t, 'prospector', 'Buscar leads fintech', '[T-122] Leads', [
+  t = s.delegate(t, 'prospector', 'Buscar leads fintech', '[{leads}] Leads', [
     search('fintech Buenos Aires equipo de ingeniería'),
     fetch('https://www.example.com/empresa'),
     edit('comercial/leads.csv'),
     edit('comercial/leads.csv'),
     write('comercial/borradores/fintech-ejemplo.md', 2500),
+    moveTask('leads', 'en-revision'),
   ]);
-  t = s.delegate(t, 'gerente-ventas', 'Revisar borradores', '[T-122] Revisión', [
+  t = s.delegate(t, 'gerente-ventas', 'Revisar borradores', 'Revisá los borradores de [{leads}]', [
     read('comercial/borradores/fintech-ejemplo.md'),
     edit('comercial/pipeline.md'),
+    moveTask('leads', 'hecha'),
   ]);
   s.emit(t, { hook_event_name: 'Stop', stop_hook_active: false });
   return t + 3000;
 }
 
-export function createDemo(ingest: Ingest) {
+/** Reemplaza `{ref}` por el id real en todos los strings del payload. */
+function resolveRefs(payload: HookPayload, refs: Map<string, string>): HookPayload {
+  if (refs.size === 0) return payload;
+  const json = JSON.stringify(payload).replace(/\{([a-z]+)\}/g, (m, ref: string) => refs.get(ref) ?? m);
+  return JSON.parse(json) as HookPayload;
+}
+
+export function createDemo(ingest: Ingest, tasks: TaskStore) {
   let timers: NodeJS.Timeout[] = [];
   let running = false;
   let sessionId: string | null = null;
 
-  function runRound(speed: number) {
+  function runRound(speed: number, first: boolean) {
     const s = new Script(sessionId!);
-    const isFirst = timers.length === 0;
-    if (isFirst) s.emit(0, { hook_event_name: 'SessionStart', source: 'startup', model: 'claude-demo' });
+    const refs = new Map<string, string>();
+    const boardFor = (actor: string): Board => ({
+      create: (ref, task) => refs.set(ref, tasks.create({ ...task, actor }).task.id),
+      move: (ref, column) => {
+        const id = refs.get(ref);
+        if (id && tasks.exists(id) && tasks.get(id).column !== column) tasks.update(id, { column, actor });
+      },
+    });
+    if (first) s.emit(0, { hook_event_name: 'SessionStart', source: 'startup', model: 'claude-demo' });
     let t = feature(s, 1000);
     t = auditoria(s, t);
     t = comercial(s, t);
     timers = [];
     for (const item of s.items) {
-      timers.push(setTimeout(() => ingest.push(item.payload, Date.now(), 'demo'), item.at / speed));
+      timers.push(
+        setTimeout(() => {
+          try {
+            item.effect?.run(boardFor(item.effect.actor));
+          } catch (err) {
+            console.error('[demo] efecto de tablero falló', err);
+          }
+          ingest.push(resolveRefs(item.payload, refs), Date.now(), 'demo');
+        }, item.at / speed),
+      );
     }
-    timers.push(setTimeout(() => running && runRound(speed), t / speed));
+    timers.push(setTimeout(() => running && runRound(speed, false), t / speed));
   }
 
   return {
@@ -240,8 +324,7 @@ export function createDemo(ingest: Ingest) {
       if (running) return sessionId!;
       running = true;
       sessionId = `demo-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
-      timers = [];
-      runRound(Math.min(Math.max(speed, 0.25), 8));
+      runRound(Math.min(Math.max(speed, 0.25), 8), true);
       return sessionId;
     },
     stop() {

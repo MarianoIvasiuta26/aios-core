@@ -1,0 +1,5 @@
+#!/bin/sh
+# Wrapper global de la CLI del tablero (se enlaza en ~/.local/bin/office-task).
+SELF=$(readlink -f "$0")
+ROOT=$(cd "$(dirname "$SELF")/../../.." && pwd)
+exec "$ROOT/node_modules/.bin/tsx" "$ROOT/apps/cli/src/index.ts" "$@"

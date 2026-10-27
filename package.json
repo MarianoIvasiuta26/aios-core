@@ -7,7 +7,8 @@
     "dev": "concurrently -k -n server,web -c blue,magenta \"pnpm --filter @office/server dev\" \"pnpm --filter @office/web dev\"",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
-    "office": "tsx scripts/office.ts"
+    "office": "tsx scripts/office.ts",
+    "task": "tsx apps/cli/src/index.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

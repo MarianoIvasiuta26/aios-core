@@ -9,9 +9,12 @@ const REORDER_WINDOW_MS = 300;
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 
 export type Broadcast = (msg: ServerMessage) => void;
+/** Recibe el evento ya guardado y el payload crudo del hook (sin redactar: no persistir). */
+export type EventListener = (event: OfficeEvent, payload: HookPayload) => void;
 
 interface Pending {
   event: NormalizedEvent;
+  payload: HookPayload;
   raw: string | null;
   source: 'hook' | 'demo';
   model: string | undefined;
@@ -35,7 +38,7 @@ export function createIngest(db: OfficeDb, broadcast: Broadcast, windowMs = REOR
   let timer: NodeJS.Timeout | null = null;
   /** tool_use_id → timestamp de inicio, para calcular la duración si el hook no la trae. */
   const starts = new Map<string, number>();
-  const listeners = new Set<(e: OfficeEvent) => void>();
+  const listeners = new Set<EventListener>();
 
   function commit(p: Pending) {
     const e = p.event;
@@ -55,7 +58,13 @@ export function createIngest(db: OfficeDb, broadcast: Broadcast, windowMs = REOR
       if (session) broadcast({ type: 'session', session });
     }
     broadcast({ type: 'event', event: saved });
-    for (const l of listeners) l(saved);
+    for (const l of listeners) {
+      try {
+        l(saved, p.payload);
+      } catch (err) {
+        console.error('[ingest] listener falló', err);
+      }
+    }
   }
 
   function flush(force = false) {
@@ -76,6 +85,7 @@ export function createIngest(db: OfficeDb, broadcast: Broadcast, windowMs = REOR
     push(payload: HookPayload, timestamp: number, source: 'hook' | 'demo' = 'hook') {
       queue.push({
         event: normalize(payload, timestamp),
+        payload,
         raw: serializeRaw(payload),
         source,
         model: payload.model,
@@ -85,7 +95,7 @@ export function createIngest(db: OfficeDb, broadcast: Broadcast, windowMs = REOR
       else schedule();
     },
     flush: () => flush(true),
-    onEvent(l: (e: OfficeEvent) => void) {
+    onEvent(l: EventListener) {
       listeners.add(l);
       return () => listeners.delete(l);
     },
