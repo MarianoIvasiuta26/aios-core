@@ -5,6 +5,7 @@ import { AgentAvatar } from '../components/AgentAvatar.tsx';
 import { useOffice } from '../lib/store.ts';
 import { basename } from './behavior.ts';
 import { agentStats, formatAgo, formatClock, formatDuration, statusLine, timeline, EMPTY_FILTER } from './insights.ts';
+import { ZoneFiles } from './zone-files.tsx';
 import type { OfficeScene } from './scene.ts';
 
 const displayName = (agent: string) => profileFor(agent === 'jefe' ? null : agent).displayName;
@@ -312,6 +313,8 @@ export function ZonePanel({ scene, zone }: { scene: OfficeScene; zone: string })
           )}
         </section>
       )}
+
+      <ZoneFiles zone={zone} />
 
       {zoneTasks.length > 0 && (
         <section>

@@ -37,6 +37,7 @@ describe('redact', () => {
     'apps/web/src/components/office/AgentSpriteFactory.ts',
     'pnpm --filter @office/server add fastify',
     'max_tokens=4096',
+    '/tmp/agent-office-demo/docs/security/INFORME-EJECUTIVO-2026-10-27.md',
   ])('no toca texto normal: %s', (input) => {
     expect(redact(input)).toBe(input);
   });

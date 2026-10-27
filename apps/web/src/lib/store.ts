@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { OfficeEvent, ServerMessage, SessionInfo, Task, TaskHistoryEntry } from '@office/shared';
+import type { OfficeEvent, ServerMessage, SessionInfo, Task, TaskHistoryEntry, WorkspaceState } from '@office/shared';
 import { api, connectSocket, type ConnectionState } from './api.ts';
 
 const MAX_EVENTS = 1000;
@@ -28,6 +28,8 @@ interface OfficeState {
   floorRev: number;
   /** Panel lateral de la oficina. */
   selection: Selection | null;
+  /** Archivos del repo de trabajo del piso (backlog, QA, hallazgos, comercial). */
+  workspace: WorkspaceState | null;
 
   setFloor(id: string | null, pinned?: boolean): void;
   select(sel: Selection | null): void;
@@ -50,6 +52,7 @@ export const useOffice = create<OfficeState>((set, get) => ({
   floorPinned: false,
   floorEvents: [],
   floorRev: 0,
+  workspace: null,
   selection: null,
 
   setFloor(id, pinned = get().floorPinned) {
@@ -100,6 +103,9 @@ function onMessage(msg: ServerMessage) {
       }
       break;
     }
+    case 'workspace':
+      if (useOffice.getState().workspace?.root === msg.workspace.root) set({ workspace: msg.workspace });
+      break;
     case 'session':
       set((s) => ({ sessions: [msg.session, ...s.sessions.filter((x) => x.id !== msg.session.id)] }));
       break;
@@ -143,19 +149,25 @@ let floorRequest = 0;
 async function loadFloor(id: string | null) {
   const req = ++floorRequest;
   if (!id) {
-    useOffice.setState((s) => ({ floorEvents: [], floorRev: s.floorRev + 1 }));
+    useOffice.setState((s) => ({ floorEvents: [], floorRev: s.floorRev + 1, workspace: null }));
     return;
   }
   useOffice.setState({ floorEvents: [] });
-  const events = await api
-    .sessionState(id)
-    .then((r) => r.events)
-    .catch(() => [] as OfficeEvent[]);
+  const [events, workspace] = await Promise.all([
+    api
+      .sessionState(id)
+      .then((r) => r.events)
+      .catch(() => [] as OfficeEvent[]),
+    api
+      .workspace(id)
+      .then((r) => r.workspace)
+      .catch(() => null),
+  ]);
   if (req !== floorRequest) return;
   useOffice.setState((s) => {
     const max = events.reduce((m, e) => Math.max(m, e.id), 0);
     const live = s.floorEvents.filter((e) => e.sessionId === id && e.id > max);
-    return { floorEvents: [...events, ...live].slice(-MAX_FLOOR_EVENTS), floorRev: s.floorRev + 1 };
+    return { floorEvents: [...events, ...live].slice(-MAX_FLOOR_EVENTS), floorRev: s.floorRev + 1, workspace };
   });
 }
 

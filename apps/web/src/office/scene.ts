@@ -1,6 +1,16 @@
 import { Application, Container, Graphics, Rectangle, Sprite, Text, Texture, TextureStyle, type Ticker } from 'pixi.js';
-import { COLUMNS, COLUMN_LABELS, profileFor, VISITOR_ID, type Column, type OfficeEvent, type Priority, type Task } from '@office/shared';
-import { buildOfficeMap, TILE, WORLD_H, WORLD_W, type OfficeMap, type WallProp } from './map.ts';
+import {
+  BOSS_ID,
+  COLUMNS,
+  COLUMN_LABELS,
+  profileFor,
+  VISITOR_ID,
+  type Column,
+  type OfficeEvent,
+  type Priority,
+  type Task,
+} from '@office/shared';
+import { buildOfficeMap, TILE, WORLD_H, WORLD_W, type OfficeMap, type Rect } from './map.ts';
 import { monitorScreen, paintOffice } from './paint.ts';
 import { CHAR_H, CHAR_W, DIRECTIONS, drawChair, drawCharacterSheet, FRAMES, POSES, type Direction, type Pose } from './characters.ts';
 import { Camera } from './camera.ts';
@@ -8,6 +18,9 @@ import { Actor, Particles, type ActorFrames } from './actor.ts';
 import { Director } from './director.ts';
 import { Monitor } from './monitor.ts';
 import { createPlaces } from './pathfind.ts';
+import { ZoneWidgets } from './widgets.ts';
+import { zoneModel, zoneReactions, type ZoneReaction } from './zones.ts';
+import type { WorkspaceState } from '@office/shared';
 
 TextureStyle.defaultOptions.scaleMode = 'nearest';
 
@@ -32,7 +45,10 @@ function framesFor(agent: string): ActorFrames {
   const frame = (col: number, row: number) =>
     new Texture({ source: sheet.source, frame: new Rectangle(col * CHAR_W, row * CHAR_H, CHAR_W, CHAR_H) });
   return {
-    dirs: Object.fromEntries(DIRECTIONS.map((dir, row) => [dir, Array.from({ length: FRAMES }, (_, f) => frame(f, row))])) as Record<Direction, Texture[]>,
+    dirs: Object.fromEntries(DIRECTIONS.map((dir, row) => [dir, Array.from({ length: FRAMES }, (_, f) => frame(f, row))])) as Record<
+      Direction,
+      Texture[]
+    >,
     poses: Object.fromEntries(POSES.map((pose, i) => [pose, frame(i, DIRECTIONS.length)])) as Record<Pose, Texture>,
   };
 }
@@ -60,7 +76,7 @@ class WallTaskBoard {
   private readonly top: number;
   private readonly maxRows: number;
 
-  constructor(rect: WallProp['rect']) {
+  constructor(rect: Rect) {
     const x = rect.x * TILE;
     const y = rect.y * TILE;
     const w = rect.w * TILE;
@@ -163,70 +179,6 @@ class WallTaskBoard {
 }
 
 /** Decoración de pared estática por ahora; la fase 7 la conecta con archivos reales. */
-function wallDecor(p: WallProp): Container {
-  const c = new Container();
-  const g = new Graphics();
-  c.addChild(g);
-  const x = p.rect.x * TILE;
-  const y = p.rect.y * TILE;
-  const w = p.rect.w * TILE;
-  const h = p.rect.h * TILE;
-  switch (p.kind) {
-    case 'whiteboard':
-      g.rect(x - 1, y + 2, w + 2, h - 3).fill('#9aa0a8');
-      g.rect(x, y + 3, w, h - 5).fill('#f7f8f8');
-      g.rect(x + 8, y + 8, 50, 1).fill('#4e7ab5');
-      g.rect(x + 8, y + 12, 34, 1).fill('#4e7ab5');
-      g.rect(x + 8, y + 16, 42, 1).fill('#c0504d');
-      g.rect(x + w - 30, y + h - 4, 18, 2).fill('#c0504d');
-      break;
-    case 'backlog-board': {
-      g.rect(x - 1, y - 6, w + 2, h + 8).fill('#4a3020');
-      g.rect(x, y - 5, w, h + 6).fill('#ece6d6');
-      for (let i = 0; i < 9; i++) g.rect(x + 3 + i * 14, y - 3 + (i % 2) * 6, 10, 5).fill(i % 3 === 0 ? '#ffe28a' : '#ffffff');
-      break;
-    }
-    case 'funnel': {
-      g.rect(x, y + 2, w, h - 3).fill('#f4f6f5');
-      const stages = [0.95, 0.75, 0.55, 0.38, 0.22];
-      stages.forEach((r, i) => {
-        const bw = Math.round((w - 16) * r);
-        g.rect(x + (w - bw) / 2, y + 5 + i * 5, bw, 4).fill(['#3a0ca3', '#4361ee', '#4895ef', '#4cc9f0', '#7ae582'][i]!);
-      });
-      break;
-    }
-    case 'chart-wall': {
-      g.rect(x, y + 2, w, h - 3).fill('#22283a');
-      for (let i = 0; i < 3; i++) {
-        const cx = x + 4 + i * 47;
-        g.rect(cx, y + 5, 43, 24).fill('#2c3450');
-        for (let b = 0; b < 6; b++) {
-          const bh = 4 + ((b * 7 + i * 5) % 16);
-          g.rect(cx + 4 + b * 6, y + 27 - bh, 4, bh).fill(i === 1 ? '#f0a830' : '#7209b7');
-        }
-      }
-      break;
-    }
-    case 'traffic-light': {
-      g.roundRect(x + 4, y + 1, 24, 10, 2).fill('#1c1f26');
-      ['#3a4a3a', '#4a4a32', '#4a3232'].forEach((col, i) => g.circle(x + 9 + i * 7, y + 6, 2.5).fill(col));
-      break;
-    }
-    case 'screen-wall': {
-      for (let i = 0; i < 8; i++) {
-        const sx = x + i * 32;
-        g.rect(sx + 1, y + 3, 30, 24).fill('#0b0f17');
-        g.rect(sx + 2, y + 4, 28, 22).fill('#0f1b26');
-        for (let l = 0; l < 4; l++) g.rect(sx + 4, y + 7 + l * 5, 8 + ((i * 7 + l * 11) % 18), 1).fill(i % 3 === 0 ? '#ff6b6b55' : '#3fb6ff66');
-      }
-      break;
-    }
-    default:
-      break;
-  }
-  return c;
-}
-
 export class OfficeScene {
   readonly app = new Application();
   readonly map: OfficeMap = buildOfficeMap();
@@ -238,6 +190,10 @@ export class OfficeScene {
   director!: Director;
   camera!: Camera;
   private board!: WallTaskBoard;
+  private widgets: ZoneWidgets | null = null;
+  private workspaceRoot: string | null = null;
+  private pendingWorkspace: WorkspaceState | null | undefined = undefined;
+  private pendingPrompt: string | null = null;
   private readonly highlight = new Graphics();
   private readonly zoneOutline = new Graphics();
   /** Click (sin arrastre) sobre un personaje o una zona. */
@@ -283,8 +239,6 @@ export class OfficeScene {
       if (p.kind === 'task-board') {
         this.board = new WallTaskBoard(p.rect);
         props.addChild(this.board.container);
-      } else if (p.kind !== 'window-view') {
-        props.addChild(wallDecor(p));
       }
     }
 
@@ -302,7 +256,9 @@ export class OfficeScene {
         chair.position.set(desk.seat.x * TILE + TILE / 2, desk.seat.y * TILE + TILE - 1 + 5);
         front.addChild(chair);
 
-        const deskFurniture = this.map.furniture.find((f) => (f.kind === 'desk' || f.kind === 'boss-desk') && f.x === desk.seat.x - 1 && f.y === desk.seat.y - 2)!;
+        const deskFurniture = this.map.furniture.find(
+          (f) => (f.kind === 'desk' || f.kind === 'boss-desk') && f.x === desk.seat.x - 1 && f.y === desk.seat.y - 2,
+        )!;
         const screen = new Graphics();
         props.addChild(screen);
         monitor = new Monitor(screen, monitorScreen(deskFurniture));
@@ -326,23 +282,18 @@ export class OfficeScene {
     this.director = new Director([...this.actors.values()], places, this.map.walkable);
     front.addChild(this.particles.container);
 
-    // Radar del SOC (la fase 7 lo hace girar durante las auditorías).
-    const radarFurniture = this.map.furniture.find((f) => f.kind === 'radar-console');
-    if (radarFurniture) {
-      const rx = (radarFurniture.x + radarFurniture.w / 2) * TILE;
-      const ry = radarFurniture.y * TILE + 18;
-      const radar = new Graphics();
-      radar.circle(rx, ry, 15).fill('#0c1f1a').stroke({ color: '#2f7a5f', width: 1 });
-      radar.circle(rx, ry, 10).stroke({ color: '#1f5a46', width: 1 });
-      radar.circle(rx, ry, 5).stroke({ color: '#1f5a46', width: 1 });
-      radar.moveTo(rx, ry).lineTo(rx + 11, ry - 10).stroke({ color: '#6bf0b4', width: 1 });
-      props.addChild(radar);
-    }
+    // Zonas vivas: backlog, semáforo, SOC, embudo, oportunidades, mapa de leads y pizarrón.
+    this.widgets = new ZoneWidgets(this.map, this.particles);
+    props.addChild(this.widgets.container);
+    if (this.pendingWorkspace !== undefined) this.setWorkspace(this.pendingWorkspace);
+    this.widgets.setPrompt(this.pendingPrompt);
 
     // Iluminación: el SOC es más oscuro, con brillos de pantallas.
     const soc = this.map.zones.find((z) => z.id === 'soc')!;
     const dim = new Graphics();
-    dim.rect((soc.rect.x - 1) * TILE, (soc.rect.y - 1) * TILE, (soc.rect.w + 2) * TILE, (soc.rect.h + 2) * TILE).fill({ color: '#05070d', alpha: 0.35 });
+    dim
+      .rect((soc.rect.x - 1) * TILE, (soc.rect.y - 1) * TILE, (soc.rect.w + 2) * TILE, (soc.rect.h + 2) * TILE)
+      .fill({ color: '#05070d', alpha: 0.35 });
     for (const d of this.map.desks.filter((x) => x.zone === 'soc')) {
       dim.circle(d.seat.x * TILE + 8, (d.seat.y - 1) * TILE, 22).fill({ color: '#3fb6ff', alpha: 0.06 });
     }
@@ -413,6 +364,7 @@ export class OfficeScene {
       if (actor.visible) tag.position.set(actor.container.x, actor.container.y + (actor.seated ? 6 : 1));
     }
     for (const m of this.monitors) m.update(dt);
+    this.widgets?.update(dt, this.socActive());
     this.particles.update(dt);
     this.camera.update(dt);
     if (this.hovered) this.emitHover();
@@ -502,6 +454,74 @@ export class OfficeScene {
 
   handleEvent(e: OfficeEvent) {
     this.director?.handle(e);
+  }
+
+  /** Archivos del repo de trabajo → zonas. Los cambios (no la carga inicial) hacen reaccionar a los agentes. */
+  setWorkspace(ws: WorkspaceState | null) {
+    if (!this.widgets || !this.director) {
+      this.pendingWorkspace = ws;
+      return;
+    }
+    const initial = (ws?.root ?? null) !== this.workspaceRoot;
+    this.workspaceRoot = ws?.root ?? null;
+    const next = zoneModel(ws);
+    const reactions = zoneReactions(initial ? null : this.widgets.current, next);
+    this.widgets.setModel(next);
+    for (const r of reactions) this.react(r);
+  }
+
+  setPrompt(prompt: string | null) {
+    this.pendingPrompt = prompt;
+    this.widgets?.setPrompt(prompt);
+  }
+
+  private react(r: ZoneReaction) {
+    const widgets = this.widgets!;
+    switch (r.type) {
+      case 'critical': {
+        widgets.raiseAlarm();
+        const text = `¡Crítico! ${r.finding.id}`;
+        // Avisa quien lo encontró; si ya no está en la oficina, compliance; si tampoco, el jefe se entera solo.
+        const by = r.finding.auditor?.startsWith('sec-') ? r.finding.auditor : 'sec-compliance';
+        if (!this.director.alert(by, text) && !this.director.alert('sec-compliance', text)) {
+          const boss = this.actors.get(BOSS_ID);
+          if (boss?.visible) {
+            boss.shake(1.2);
+            boss.bubbleText(text, 'error');
+            setTimeout(() => boss.bubbleText(null), 3000);
+          }
+        }
+        break;
+      }
+      case 'qa':
+        if (r.light === 'rojo') widgets.blinkQa();
+        else if (r.light === 'verde') for (const a of ['qa-unit', 'qa-e2e']) this.director.react(a);
+        break;
+      case 'hot-opportunity':
+        widgets.sparkleChart();
+        this.director.react('analista-mercado');
+        break;
+      case 'new-leads':
+        this.director.react('prospector');
+        break;
+      case 'draft-approved': {
+        const gerente = this.actors.get('gerente-ventas');
+        const desk = this.map.desks.find((d) => d.agent === 'gerente-ventas');
+        this.director.react('gerente-ventas');
+        if (gerente?.visible) widgets.thumbsUp(gerente.container.x, gerente.container.y - CHAR_H - 8);
+        else if (desk) widgets.thumbsUp(desk.seat.x * TILE + TILE / 2, (desk.seat.y - 2) * TILE);
+        break;
+      }
+    }
+  }
+
+  /** Algún auditor está trabajando en su escritorio → el radar barre rápido. */
+  private socActive() {
+    for (const agent of ['sec-appsec', 'sec-cloud', 'sec-supply-chain', 'sec-compliance']) {
+      const s = this.director?.status(agent);
+      if (s?.present && s.where === 'desk' && !s.finished && !s.idle) return true;
+    }
+    return false;
   }
 
   setTasks(tasks: Task[]) {

@@ -65,10 +65,11 @@ function entropy(s: string): number {
 const CANDIDATE = /[A-Za-z0-9+/_=-]{32,}/g;
 
 function looksRandom(token: string): boolean {
-  if (token.includes('/') && /^[\w.-]+(?:\/[\w.-]+)+$/.test(token) && !/[+=]/.test(token)) {
-    // Parece una ruta (a/b/c), no base64.
-    const segments = token.split('/');
-    if (segments.every((s) => s.length < 24)) return false;
+  if (token.includes('/') && /^\/?[\w.-]+(?:\/[\w.-]+)+$/.test(token) && !/[+=]/.test(token)) {
+    // Parece una ruta (a/b/c o /a/b/c), no base64.
+    const segments = token.split('/').filter(Boolean);
+    // Segmentos cortos, o largos pero hechos de palabras con guiones (INFORME-EJECUTIVO-2026-10-27).
+    if (segments.every((s) => s.length < 24 || s.split(/[-_.]/).every((w) => w.length <= 12))) return false;
   }
   const classes = [/[a-z]/, /[A-Z]/, /[0-9]/].filter((r) => r.test(token)).length;
   return classes === 3 && entropy(token) >= 4.2;

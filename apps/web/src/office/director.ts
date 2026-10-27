@@ -17,6 +17,8 @@ interface AgentState {
   queue: Activity[];
   lastEventAt: number;
   idle: boolean;
+  /** Aviso urgente pendiente de darle al jefe (hallazgo crítico). */
+  alert: string | null;
 }
 
 /** Si se acumulan más actividades que esto, se saltean las intermedias para no quedar atrasados. */
@@ -52,6 +54,7 @@ export class Director {
         queue: [],
         lastEventAt: 0,
         idle: false,
+        alert: null,
       });
     }
   }
@@ -87,6 +90,7 @@ export class Director {
       const snap = snaps.get(agent);
       st.queue = [];
       st.idle = false;
+      st.alert = null;
       st.actor.hide();
       st.where = 'away';
       st.finished = false;
@@ -158,7 +162,14 @@ export class Director {
         this.show(st, st.queue.shift()!);
       }
       // Sin eventos por un rato → café (o el jefe se estira).
-      if (!st.idle && !st.finished && st.where === 'desk' && !st.actor.busy && st.queue.length === 0 && now - st.lastEventAt > IDLE_AFTER_MS) {
+      if (
+        !st.idle &&
+        !st.finished &&
+        st.where === 'desk' &&
+        !st.actor.busy &&
+        st.queue.length === 0 &&
+        now - st.lastEventAt > IDLE_AFTER_MS
+      ) {
         this.idle(st);
       }
     }
@@ -169,11 +180,7 @@ export class Director {
   }
 
   private walkHome(st: AgentState): Step[] {
-    return [
-      { type: 'walk', to: this.places.home(st.actor.agent) },
-      { type: 'sit' },
-      { type: 'run', fn: () => (st.where = 'desk') },
-    ];
+    return [{ type: 'walk', to: this.places.home(st.actor.agent) }, { type: 'sit' }, { type: 'run', fn: () => (st.where = 'desk') }];
   }
 
   private enter(st: AgentState, launched = false) {
@@ -201,7 +208,10 @@ export class Director {
   private handoff(from: AgentState, to: AgentState) {
     const [spotFrom, spotTo] = this.places.handoff;
     from.where = 'elsewhere';
-    from.actor.setPlan([{ type: 'walk', to: spotFrom }, { type: 'wait', ms: 3_600_000 }]);
+    from.actor.setPlan([
+      { type: 'walk', to: spotFrom },
+      { type: 'wait', ms: 3_600_000 },
+    ]);
     to.actor.setPlan([
       { type: 'walk', to: spotTo },
       {
@@ -228,11 +238,63 @@ export class Director {
 
   private toCafe(st: AgentState) {
     st.where = 'elsewhere';
+    st.actor.setPlan(this.cafeSteps(st));
+  }
+
+  /**
+   * Un aviso urgente: el agente deja lo que hace, va a la oficina del jefe y vuelve. Si en el camino
+   * termina su trabajo, el aviso reemplaza al "¡Listo!". Devuelve false si el agente no está.
+   */
+  alert(agent: string, text: string): boolean {
+    const st = this.agents.get(agent);
+    if (!st?.actor.visible || st.where === 'away') return false;
+    st.alert = text;
+    const resting = st.finished || st.idle;
+    st.where = 'elsewhere';
+    st.actor.clearEffects();
     st.actor.setPlan([
+      { type: 'walk', to: this.places.bossDoor },
+      ...this.deliverAlert(st),
+      ...(resting ? this.cafeSteps(st) : this.walkHome(st)),
+    ]);
+    return true;
+  }
+
+  /** Reacción breve en el lugar, sin interrumpir lo que está haciendo. */
+  react(agent: string): boolean {
+    const st = this.agents.get(agent);
+    if (!st?.actor.visible || st.where === 'away') return false;
+    st.actor.cheer(1.4);
+    return true;
+  }
+
+  private deliverAlert(st: AgentState): Step[] {
+    const boss = this.agents.get(BOSS_ID);
+    return [
+      {
+        type: 'run',
+        fn: () => {
+          st.actor.bubbleText(st.alert, 'error');
+          if (boss?.actor.visible) boss.actor.shake(1.2);
+        },
+      },
+      { type: 'wait', ms: 2600, facing: 'up' },
+      {
+        type: 'run',
+        fn: () => {
+          st.alert = null;
+          st.actor.bubbleText(null);
+        },
+      },
+    ];
+  }
+
+  private cafeSteps(st: AgentState): Step[] {
+    return [
       { type: 'walk', to: this.places.coffee(st.actor.agent) },
       { type: 'run', fn: () => (st.where = 'cafe') },
       { type: 'wait', ms: 3_600_000, pose: 'cup' },
-    ]);
+    ];
   }
 
   private finish(st: AgentState) {
@@ -247,6 +309,10 @@ export class Director {
     st.where = 'elsewhere';
     this.lastFinish = { st, at: this.now() };
     // Festeja en su lugar, le reporta al jefe y se va al café (salvo que entre alguien y le pase la posta).
+    if (st.alert) {
+      st.actor.setPlan([{ type: 'walk', to: this.places.bossDoor }, ...this.deliverAlert(st), ...this.cafeSteps(st)]);
+      return;
+    }
     st.actor.setPlan([
       { type: 'run', fn: () => st.actor.cheer() },
       { type: 'wait', ms: 1300 },
@@ -254,13 +320,12 @@ export class Director {
       { type: 'run', fn: () => st.actor.bubbleText('¡Listo!') },
       { type: 'wait', ms: 1400, facing: 'up' },
       { type: 'run', fn: () => st.actor.bubbleText(null) },
-      { type: 'walk', to: this.places.coffee(st.actor.agent) },
-      { type: 'run', fn: () => (st.where = 'cafe') },
-      { type: 'wait', ms: 3_600_000, pose: 'cup' },
+      ...this.cafeSteps(st),
     ]);
   }
 
   private leave(st: AgentState) {
+    st.alert = null;
     st.queue = [];
     st.finished = false;
     st.idle = false;
@@ -271,11 +336,7 @@ export class Director {
     st.actor.clearEffects();
     this.screen(st, 'off');
     st.where = 'elsewhere';
-    st.actor.setPlan([
-      { type: 'walk', to: this.places.door },
-      { type: 'run', fn: () => (st.where = 'away') },
-      { type: 'hide' },
-    ]);
+    st.actor.setPlan([{ type: 'walk', to: this.places.door }, { type: 'run', fn: () => (st.where = 'away') }, { type: 'hide' }]);
   }
 
   private idle(st: AgentState) {
@@ -289,7 +350,10 @@ export class Director {
         { type: 'wait', ms: 3_600_000, pose: 'phone' },
       ]);
     } else {
-      st.actor.setPlan([{ type: 'walk', to: this.places.coffee(st.actor.agent) }, { type: 'wait', ms: 3_600_000, pose: 'cup' }]);
+      st.actor.setPlan([
+        { type: 'walk', to: this.places.coffee(st.actor.agent) },
+        { type: 'wait', ms: 3_600_000, pose: 'cup' },
+      ]);
     }
     st.where = 'elsewhere';
   }

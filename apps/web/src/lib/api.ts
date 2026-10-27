@@ -1,4 +1,4 @@
-import type { NewTask, OfficeEvent, ServerMessage, SessionInfo, Task, TaskHistoryEntry, TaskPatch } from '@office/shared';
+import type { NewTask, OfficeEvent, ServerMessage, SessionInfo, Task, TaskHistoryEntry, TaskPatch, WorkspaceState } from '@office/shared';
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -15,6 +15,7 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   sessions: () => json<SessionInfo[]>('/sessions'),
   sessionState: (id: string) => json<{ session: SessionInfo; events: OfficeEvent[] }>(`/sessions/${encodeURIComponent(id)}/state`),
+  workspace: (session: string) => json<{ workspace: WorkspaceState | null }>(`/workspace?session=${encodeURIComponent(session)}`),
   demoStatus: () => json<{ running: boolean; sessionId: string | null }>('/demo'),
   demoStart: (speed = 1) => json<{ sessionId: string }>('/demo/start', { method: 'POST', body: JSON.stringify({ speed }) }),
   demoStop: () => json<{ running: boolean }>('/demo/stop', { method: 'POST', body: '{}' }),

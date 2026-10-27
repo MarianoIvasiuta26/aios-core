@@ -7,6 +7,7 @@ import { useOffice } from '../lib/store.ts';
 import { EMPTY_FILTER, type TimelineFilter } from './insights.ts';
 import { AgentPanel, AgentTooltip, FloorPicker, ZonePanel } from './panels.tsx';
 import { OfficeScene } from './scene.ts';
+import { currentPrompt } from './zones.ts';
 import { Timeline } from './Timeline.tsx';
 import '../board/board.css';
 import './office.css';
@@ -76,6 +77,16 @@ export function OfficeView() {
   useEffect(() => {
     if (ready) sceneRef.current?.setZoneOutline(selection?.type === 'zone' ? selection.zone : null);
   }, [ready, selection]);
+
+  // Archivos del repo de trabajo → zonas; el último pedido → pizarrón de la sala de reuniones.
+  const workspace = useOffice((s) => s.workspace);
+  const prompt = useOffice((s) => currentPrompt(s.floorEvents));
+  useEffect(() => {
+    if (ready) sceneRef.current?.setWorkspace(workspace);
+  }, [ready, workspace]);
+  useEffect(() => {
+    if (ready) sceneRef.current?.setPrompt(prompt);
+  }, [ready, prompt]);
 
   const showInTimeline = useCallback((agent: string) => {
     setFilter({ ...EMPTY_FILTER, agents: [agent] });
