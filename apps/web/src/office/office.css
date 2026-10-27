@@ -1,0 +1,16 @@
+.office { position: relative; height: 100%; overflow: hidden; background: #0e131c; }
+.office-canvas { position: absolute; inset: 0; }
+.office-canvas canvas { display: block; image-rendering: pixelated; }
+.office-controls {
+  position: absolute; right: 16px; bottom: 16px;
+  display: flex; align-items: center; gap: 4px; padding: 4px;
+  background: rgba(26, 35, 51, 0.9); border: 1px solid var(--line); border-radius: 8px;
+}
+.office-controls button { min-width: 32px; }
+.office-controls .fps { padding: 0 8px; font-variant-numeric: tabular-nums; color: var(--ok); font-size: 13px; }
+.office-controls .fps.low { color: var(--warn); }
+.office-highlight {
+  position: absolute; left: 16px; bottom: 16px;
+  display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 10px;
+  background: rgba(26, 35, 51, 0.9); border: 1px solid var(--gold); border-radius: 8px; font-size: 14px;
+}

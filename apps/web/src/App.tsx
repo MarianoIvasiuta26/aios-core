@@ -2,6 +2,7 @@ import { useEffect, useState, type MouseEvent } from 'react';
 import { BoardPage } from './board/BoardPage.tsx';
 import { DebugPage } from './debug/DebugPage.tsx';
 import { DemoToggle } from './components/DemoToggle.tsx';
+import { OfficeView } from './office/OfficeView.tsx';
 import { useOffice } from './lib/store.ts';
 
 const ROUTES = [
@@ -56,13 +57,7 @@ export function App() {
         ) : path.startsWith('/debug') ? (
           <DebugPage />
         ) : (
-          <div className="placeholder">
-            <p>La oficina en pixel art llega en la fase 3.</p>
-            <p>
-              Mientras tanto, mirá el <a href="/tablero" onClick={go('/tablero')}>tablero</a> o la vista de{' '}
-              <a href="/debug" onClick={go('/debug')}>diagnóstico</a>.
-            </p>
-          </div>
+          <OfficeView />
         )}
       </main>
     </div>

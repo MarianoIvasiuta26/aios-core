@@ -18,6 +18,7 @@ interface OfficeState {
   highlightedAgent: string | null;
 
   openTask(id: string | null): void;
+  highlightAgent(agent: string | null): void;
   /** Aplica un cambio local antes de que confirme el server. */
   patchTaskLocal(task: Task): void;
 }
@@ -34,7 +35,8 @@ export const useOffice = create<OfficeState>((set, get) => ({
 
   openTask(id) {
     const task = id ? get().tasks[id] : undefined;
-    set({ openTaskId: id, openHistory: [], highlightedAgent: task?.assignee ?? null });
+    // El resaltado sobrevive al cerrar el panel: así se puede ir a la oficina a ver al agente.
+    set((s) => ({ openTaskId: id, openHistory: [], highlightedAgent: task?.assignee ?? s.highlightedAgent }));
     if (id) {
       void api
         .task(id)
@@ -43,6 +45,10 @@ export const useOffice = create<OfficeState>((set, get) => ({
         })
         .catch(() => {});
     }
+  },
+
+  highlightAgent(agent) {
+    set({ highlightedAgent: agent });
   },
 
   patchTaskLocal(task) {
