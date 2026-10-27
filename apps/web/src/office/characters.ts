@@ -12,6 +12,14 @@ export const DIRECTIONS = ['down', 'left', 'right', 'up'] as const;
 export type Direction = (typeof DIRECTIONS)[number];
 export const FRAMES = 3;
 
+/** Poses especiales (fila extra de la hoja). Las de frente usan la cara; las de atrás, la espalda. */
+export const POSES = ['cheer', 'cup', 'phone', 'hand', 'stretch'] as const;
+export type Pose = (typeof POSES)[number];
+const POSE_DIR: Record<Pose, Direction> = { cheer: 'down', cup: 'down', phone: 'down', hand: 'up', stretch: 'up' };
+const MUG = 'M';
+const PHONE = 'F';
+const SCREEN = 'L';
+
 const BODY = [
   '....CCCCCCCC....',
   '...DCCCCCCCCD...',
@@ -169,7 +177,48 @@ function template(dir: Direction, frame: number): string[] {
   return rows;
 }
 
-function drawFrame(ctx: CanvasRenderingContext2D, ox: number, oy: number, look: Look, dir: Direction, frame: number) {
+/** Brazo levantado: columna de manga desde el hombro hacia arriba y la mano en la punta. */
+function raiseArm(r: string[][], col: number, armCol: number) {
+  for (let y = 11; y <= 15; y++) r[y]![col] = '.';
+  for (let y = 5; y <= 10; y++) r[y]![armCol] = 'D';
+  r[4]![armCol] = 'S';
+}
+
+function poseTemplate(pose: Pose): string[] {
+  const r = template(POSE_DIR[pose], 0).map((row) => [...row]);
+  switch (pose) {
+    case 'cheer':
+    case 'stretch':
+      raiseArm(r, 3, 3);
+      raiseArm(r, 12, 12);
+      break;
+    case 'hand':
+      raiseArm(r, 12, 12);
+      break;
+    case 'cup':
+      r[13]![11] = MUG;
+      r[13]![12] = MUG;
+      r[14]![11] = MUG;
+      r[14]![12] = MUG;
+      r[14]![13] = MUG;
+      r[15]![12] = 'S';
+      break;
+    case 'phone':
+      for (let y = 12; y <= 14; y++) {
+        r[y]![7] = PHONE;
+        r[y]![8] = PHONE;
+      }
+      r[12]![7] = SCREEN;
+      r[15]![3] = 'C';
+      r[15]![12] = 'C';
+      r[14]![6] = 'S';
+      r[14]![9] = 'S';
+      break;
+  }
+  return r.map((row) => row.join(''));
+}
+
+function drawFrame(ctx: CanvasRenderingContext2D, ox: number, oy: number, look: Look, dir: Direction, frame: number, pose?: Pose) {
   const coat = look.accessories.includes('coat');
   const colors: Record<string, string> = {
     H: look.hair,
@@ -179,8 +228,11 @@ function drawFrame(ctx: CanvasRenderingContext2D, ox: number, oy: number, look: 
     D: coat ? '#d5dbe0' : shade(look.shirt, -0.25),
     P: look.pants,
     B: '#2a2522',
+    [MUG]: '#f4f1e8',
+    [PHONE]: '#1c1f26',
+    [SCREEN]: '#6cc7ff',
   };
-  const rows = template(dir, frame);
+  const rows = pose ? poseTemplate(pose) : template(dir, frame);
   rows.forEach((row, y) => {
     [...row].forEach((ch, x) => {
       const c = colors[ch];
@@ -261,16 +313,17 @@ function drawFrame(ctx: CanvasRenderingContext2D, ox: number, oy: number, look: 
   }
 }
 
-/** Hoja de sprites de un agente: 3 cuadros × 4 direcciones. */
+/** Hoja de sprites de un agente: filas = direcciones (3 cuadros cada una) + una fila de poses. */
 export function drawCharacterSheet(agent: string): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
-  canvas.width = CHAR_W * FRAMES;
-  canvas.height = CHAR_H * DIRECTIONS.length;
+  canvas.width = CHAR_W * Math.max(FRAMES, POSES.length);
+  canvas.height = CHAR_H * (DIRECTIONS.length + 1);
   const ctx = canvas.getContext('2d')!;
   const look = lookFor(agent);
   DIRECTIONS.forEach((dir, row) => {
     for (let f = 0; f < FRAMES; f++) drawFrame(ctx, f * CHAR_W, row * CHAR_H, look, dir, f);
   });
+  POSES.forEach((pose, i) => drawFrame(ctx, i * CHAR_W, DIRECTIONS.length * CHAR_H, look, POSE_DIR[pose], 0, pose));
   return canvas;
 }
 

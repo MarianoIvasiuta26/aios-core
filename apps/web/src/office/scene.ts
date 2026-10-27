@@ -1,9 +1,13 @@
 import { Application, Container, Graphics, Rectangle, Sprite, Text, Texture, TextureStyle, type Ticker } from 'pixi.js';
-import { COLUMNS, COLUMN_LABELS, profileFor, type Column, type Priority, type Task } from '@office/shared';
+import { COLUMNS, COLUMN_LABELS, profileFor, VISITOR_ID, type Column, type OfficeEvent, type Priority, type Task } from '@office/shared';
 import { buildOfficeMap, TILE, WORLD_H, WORLD_W, type OfficeMap, type WallProp } from './map.ts';
 import { monitorScreen, paintOffice } from './paint.ts';
-import { CHAR_H, CHAR_W, DIRECTIONS, drawChair, drawCharacterSheet, FRAMES, type Direction } from './characters.ts';
+import { CHAR_H, CHAR_W, DIRECTIONS, drawChair, drawCharacterSheet, FRAMES, POSES, type Direction, type Pose } from './characters.ts';
 import { Camera } from './camera.ts';
+import { Actor, Particles, type ActorFrames } from './actor.ts';
+import { Director } from './director.ts';
+import { Monitor } from './monitor.ts';
+import { createPlaces } from './pathfind.ts';
 
 TextureStyle.defaultOptions.scaleMode = 'nearest';
 
@@ -21,14 +25,14 @@ function label(text: string, size: number, fill: string, opts: { weight?: '500' 
   return t;
 }
 
-export interface CharacterNode {
-  agent: string;
-  container: Container;
-  sprite: Sprite;
-  frames: Record<Direction, Texture[]>;
-  seat: { x: number; y: number };
-  nameTag: Container;
-  monitor: Graphics;
+function framesFor(agent: string): ActorFrames {
+  const sheet = Texture.from(drawCharacterSheet(agent));
+  const frame = (col: number, row: number) =>
+    new Texture({ source: sheet.source, frame: new Rectangle(col * CHAR_W, row * CHAR_H, CHAR_W, CHAR_H) });
+  return {
+    dirs: Object.fromEntries(DIRECTIONS.map((dir, row) => [dir, Array.from({ length: FRAMES }, (_, f) => frame(f, row))])) as Record<Direction, Texture[]>,
+    poses: Object.fromEntries(POSES.map((pose, i) => [pose, frame(i, DIRECTIONS.length)])) as Record<Pose, Texture>,
+  };
 }
 
 const PRIO_COLOR: Record<Priority, string> = { P0: '#e5484d', P1: '#f0a830', P2: '#5b9be0', P3: '#9aa3b2' };
@@ -225,7 +229,11 @@ export class OfficeScene {
   readonly app = new Application();
   readonly map: OfficeMap = buildOfficeMap();
   readonly world = new Container();
-  readonly characters = new Map<string, CharacterNode>();
+  readonly actors = new Map<string, Actor>();
+  private readonly nameTags = new Map<string, Container>();
+  private readonly monitors: Monitor[] = [];
+  private readonly particles = new Particles();
+  director!: Director;
   camera!: Camera;
   private board!: WallTaskBoard;
   private readonly highlight = new Graphics();
@@ -271,50 +279,43 @@ export class OfficeScene {
       }
     }
 
-    // Personajes en su escritorio, de espaldas, mirando el monitor.
+    // Sillas fijas en cada escritorio; los personajes entran, se sientan y se van.
+    const places = createPlaces(this.map);
     const chairTex = Texture.from(drawChair(false));
     const bossChairTex = Texture.from(drawChair(true));
-    for (const d of this.map.desks) {
-      const sheet = Texture.from(drawCharacterSheet(d.agent));
-      const frames = Object.fromEntries(
-        DIRECTIONS.map((dir, row) => [
-          dir,
-          Array.from({ length: FRAMES }, (_, f) => new Texture({ source: sheet.source, frame: new Rectangle(f * CHAR_W, row * CHAR_H, CHAR_W, CHAR_H) })),
-        ]),
-      ) as Record<Direction, Texture[]>;
+    const agents = [...this.map.desks.map((d) => d.agent), VISITOR_ID];
+    for (const agent of agents) {
+      const desk = this.map.desks.find((d) => d.agent === agent);
+      let monitor: Monitor | null = null;
+      if (desk) {
+        const chair = new Sprite(agent === 'jefe' ? bossChairTex : chairTex);
+        chair.anchor.set(0.5, 1);
+        chair.position.set(desk.seat.x * TILE + TILE / 2, desk.seat.y * TILE + TILE - 1 + 5);
+        front.addChild(chair);
 
-      const container = new Container();
-      const sprite = new Sprite(frames.up[0]);
-      sprite.anchor.set(0.5, 1);
-      container.addChild(sprite);
-      container.position.set(d.seat.x * TILE + TILE / 2, d.seat.y * TILE + TILE - 1);
-      container.zIndex = container.y;
-      actors.addChild(container);
+        const deskFurniture = this.map.furniture.find((f) => (f.kind === 'desk' || f.kind === 'boss-desk') && f.x === desk.seat.x - 1 && f.y === desk.seat.y - 2)!;
+        const screen = new Graphics();
+        props.addChild(screen);
+        monitor = new Monitor(screen, monitorScreen(deskFurniture));
+        this.monitors.push(monitor);
+      }
 
-      const chair = new Sprite(d.agent === 'jefe' ? bossChairTex : chairTex);
-      chair.anchor.set(0.5, 1);
-      chair.position.set(container.x, container.y + 5);
-      front.addChild(chair);
-
-      const deskFurniture = this.map.furniture.find((f) => (f.kind === 'desk' || f.kind === 'boss-desk') && f.x === d.seat.x - 1 && f.y === d.seat.y - 2)!;
-      const s = monitorScreen(deskFurniture);
-      const monitor = new Graphics();
-      monitor.rect(s.x, s.y, s.w, s.h).fill('#14263a');
-      monitor.rect(s.x + 1, s.y + 1, 4, 1).fill('#3fb6ff');
-      monitor.rect(s.x + 1, s.y + 3, 7, 1).fill('#2a4a66');
-      props.addChild(monitor);
+      const actor = new Actor(agent, framesFor(agent), (a, b) => this.director.pathFor(agent)(a, b), this.particles, monitor);
+      actors.addChild(actor.container);
+      this.actors.set(agent, actor);
 
       const nameTag = new Container();
-      const name = label(profileFor(d.agent === 'jefe' ? null : d.agent).displayName, 5, '#f4eedf');
+      const name = label(profileFor(agent === 'jefe' ? null : agent).displayName, 5, '#f4eedf');
       const bg = new Graphics();
       const pad = 2;
       bg.roundRect(-name.width / 2 - pad, -1, name.width + pad * 2, name.height + 1, 2).fill({ color: '#121925', alpha: 0.75 });
       nameTag.addChild(bg, name);
-      nameTag.position.set(container.x, container.y + 6);
+      nameTag.visible = false;
       overlay.addChild(nameTag);
-
-      this.characters.set(d.agent, { agent: d.agent, container, sprite, frames, seat: d.seat, nameTag, monitor });
+      this.nameTags.set(agent, nameTag);
     }
+    this.director = new Director([...this.actors.values()], places, this.map.walkable);
+    front.addChild(this.particles.container);
 
     // Radar del SOC (la fase 7 lo hace girar durante las auditorías).
     const radarFurniture = this.map.furniture.find((f) => f.kind === 'radar-console');
@@ -362,22 +363,41 @@ export class OfficeScene {
     const dt = t.deltaMS / 1000;
     this.elapsed += dt;
     this.board?.update(dt);
+    this.director.update();
+    for (const [agent, actor] of this.actors) {
+      actor.update(dt);
+      const tag = this.nameTags.get(agent)!;
+      tag.visible = actor.visible;
+      if (actor.visible) tag.position.set(actor.container.x, actor.container.y + (actor.seated ? 6 : 1));
+    }
+    for (const m of this.monitors) m.update(dt);
+    this.particles.update(dt);
     this.camera.update(dt);
     if (this.highlighted) {
-      const node = this.characters.get(this.highlighted);
-      if (node) {
+      const actor = this.actors.get(this.highlighted);
+      if (actor) {
         const bob = Math.round(Math.sin(this.elapsed * 6) * 2);
-        this.highlight.position.set(node.container.x, node.container.y - CHAR_H - 6 + bob);
+        this.highlight.visible = actor.visible;
+        this.highlight.position.set(actor.container.x, actor.container.y - CHAR_H - 6 + bob);
       }
     }
   };
+
+  /** Rehace el piso a partir del historial de la sesión (sin animar). */
+  resetFloor(events: OfficeEvent[]) {
+    this.director?.reset(events);
+  }
+
+  handleEvent(e: OfficeEvent) {
+    this.director?.handle(e);
+  }
 
   setTasks(tasks: Task[]) {
     this.board?.setTasks(tasks);
   }
 
   setHighlight(agent: string | null) {
-    this.highlighted = agent && this.characters.has(agent) ? agent : null;
+    this.highlighted = agent && this.actors.has(agent) ? agent : null;
     this.highlight.clear();
     if (!this.highlighted) {
       this.highlight.visible = false;
@@ -387,8 +407,9 @@ export class OfficeScene {
     this.highlight.poly([-5, -6, 5, -6, 0, 0]).fill('#f2c14e').stroke({ color: '#121925', width: 1 });
     this.highlight.circle(0, -9, 2).fill(color);
     this.highlight.visible = true;
-    const node = this.characters.get(this.highlighted)!;
-    this.camera.focus(node.container.x, node.container.y - CHAR_H / 2);
+    const actor = this.actors.get(this.highlighted)!;
+    if (actor.visible) this.camera.focus(actor.center.x, actor.center.y);
+    else this.camera.focus(this.map.pois.entrance.x * TILE, this.map.pois.entrance.y * TILE);
   }
 
   get fps() {

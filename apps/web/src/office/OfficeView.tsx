@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { profileFor } from '@office/shared';
+import { profileFor, type OfficeEvent } from '@office/shared';
 import { AgentAvatar } from '../components/AgentAvatar.tsx';
+import { api } from '../lib/api.ts';
 import { useOffice } from '../lib/store.ts';
 import { OfficeScene } from './scene.ts';
 import './office.css';
@@ -13,6 +14,7 @@ export function OfficeView() {
   const tasks = useOffice((s) => s.tasks);
   const highlighted = useOffice((s) => s.highlightedAgent);
   const highlightAgent = useOffice((s) => s.highlightAgent);
+  const floor = useOffice((s) => s.floor);
 
   useEffect(() => {
     const scene = new OfficeScene();
@@ -37,6 +39,46 @@ export function OfficeView() {
   useEffect(() => {
     if (ready) sceneRef.current?.setHighlight(highlighted);
   }, [ready, highlighted]);
+
+  // Al cambiar de piso: reconstruir desde el historial y reaplicar lo que llegó en vivo mientras tanto.
+  useEffect(() => {
+    if (!ready) return;
+    const scene = sceneRef.current!;
+    if (!floor) {
+      scene.resetFloor([]);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .sessionState(floor)
+      .then(({ events }) => {
+        if (cancelled) return;
+        scene.resetFloor(events);
+        const live = useOffice.getState().events.filter((e) => e.sessionId === floor);
+        for (const e of live.reverse()) scene.handleEvent(e);
+      })
+      .catch(() => !cancelled && scene.resetFloor([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, floor]);
+
+  // Eventos en vivo.
+  useEffect(() => {
+    if (!ready) return;
+    let lastSeen = useOffice.getState().events[0]?.id ?? 0;
+    return useOffice.subscribe((s) => {
+      const fresh: OfficeEvent[] = [];
+      for (const e of s.events) {
+        if (e.id <= lastSeen) break;
+        fresh.push(e);
+      }
+      if (fresh.length === 0) return;
+      lastSeen = fresh[0]!.id;
+      // Al cambiar de piso, el efecto de arriba reconstruye todo; acá solo van los del piso actual.
+      for (const e of fresh.reverse()) if (e.sessionId === s.floor) sceneRef.current?.handleEvent(e);
+    });
+  }, [ready]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

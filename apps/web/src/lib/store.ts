@@ -16,7 +16,10 @@ interface OfficeState {
   openHistory: TaskHistoryEntry[];
   /** Agente resaltado (click en una tarjeta → se resalta en la oficina). */
   highlightedAgent: string | null;
+  /** Sesión que muestra la oficina ("piso"). */
+  floor: string | null;
 
+  setFloor(id: string | null): void;
   openTask(id: string | null): void;
   highlightAgent(agent: string | null): void;
   /** Aplica un cambio local antes de que confirme el server. */
@@ -32,6 +35,11 @@ export const useOffice = create<OfficeState>((set, get) => ({
   openTaskId: null,
   openHistory: [],
   highlightedAgent: null,
+  floor: null,
+
+  setFloor(id) {
+    set({ floor: id });
+  },
 
   openTask(id) {
     const task = id ? get().tasks[id] : undefined;
@@ -56,11 +64,13 @@ export const useOffice = create<OfficeState>((set, get) => ({
   },
 }));
 
+if (import.meta.env.DEV) (window as unknown as { __store?: typeof useOffice }).__store = useOffice;
+
 function onMessage(msg: ServerMessage) {
   const set = useOffice.setState;
   switch (msg.type) {
     case 'event':
-      set((s) => ({ events: [msg.event, ...s.events].slice(0, MAX_EVENTS) }));
+      set((s) => ({ events: [msg.event, ...s.events].slice(0, MAX_EVENTS), floor: followFloor(s, msg.event.sessionId) }));
       break;
     case 'session':
       set((s) => ({ sessions: [msg.session, ...s.sessions.filter((x) => x.id !== msg.session.id)] }));
@@ -77,6 +87,21 @@ function onMessage(msg: ServerMessage) {
   }
 }
 
+/** Piso por defecto: la sesión abierta con actividad más reciente (o la última que hubo). */
+export function pickFloor(sessions: SessionInfo[]): string | null {
+  const sorted = [...sessions].sort((a, b) => b.lastEventAt - a.lastEventAt);
+  return (sorted.find((s) => s.endedAt === null) ?? sorted[0])?.id ?? null;
+}
+
+/** Un evento de otra sesión se lleva la oficina solo si el piso actual terminó o está quieto. */
+const FLOOR_QUIET_MS = 120_000;
+
+function followFloor(s: OfficeState, sessionId: string): string | null {
+  if (s.floor === sessionId) return s.floor;
+  const current = s.sessions.find((x) => x.id === s.floor);
+  return !current || current.endedAt !== null || Date.now() - current.lastEventAt > FLOOR_QUIET_MS ? sessionId : s.floor;
+}
+
 function mergeHistory(current: TaskHistoryEntry[], incoming: TaskHistoryEntry[]): TaskHistoryEntry[] {
   const byId = new Map(current.map((h) => [h.id, h]));
   for (const h of incoming) byId.set(h.id, h);
@@ -85,7 +110,11 @@ function mergeHistory(current: TaskHistoryEntry[], incoming: TaskHistoryEntry[])
 
 async function loadSnapshot() {
   const [tasks, sessions] = await Promise.all([api.tasks(), api.sessions()]);
-  useOffice.setState({ tasks: Object.fromEntries(tasks.map((t) => [t.id, t])), sessions });
+  useOffice.setState((s) => ({
+    tasks: Object.fromEntries(tasks.map((t) => [t.id, t])),
+    sessions,
+    floor: s.floor ?? pickFloor(sessions),
+  }));
 }
 
 let started = false;
