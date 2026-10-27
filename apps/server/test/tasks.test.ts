@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { ServerMessage, Task, TaskHistoryEntry } from '@office/shared';
@@ -6,7 +8,7 @@ import { buildApp, type OfficeApp } from '../src/app.ts';
 let app: OfficeApp;
 
 beforeEach(async () => {
-  app = await buildApp({ dbFile: ':memory:', reorderWindowMs: 0 });
+  app = await buildApp({ dbFile: ':memory:', reorderWindowMs: 0, demoRoot: join(tmpdir(), `office-demo-test-${process.pid}`) });
 });
 afterEach(async () => {
   await app.close();
@@ -24,6 +26,27 @@ const hook = (payload: Record<string, unknown>) =>
   app.inject({ method: 'POST', url: '/events', payload: { session_id: 's1', cwd: '/r', ...payload } });
 
 describe('API de tareas', () => {
+  it('la demo borra sus tarjetas al detenerse (con historial) y avisa por WebSocket', async () => {
+    await create({ title: 'Mía' });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (app.server.address() as { port: number }).port;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const deleted: string[][] = [];
+    ws.on('message', (d) => {
+      const m = JSON.parse(String(d)) as ServerMessage;
+      if (m.type === 'task_deleted') deleted.push(m.ids);
+    });
+    await new Promise((r) => ws.once('open', r));
+    app.office.demo.start(8);
+    await expect.poll(() => app.office.tasks.list().length, { timeout: 5000 }).toBeGreaterThan(1);
+    app.office.demo.stop();
+    expect(app.office.tasks.list().map((t) => t.title)).toEqual(['Mía']);
+    await expect.poll(() => deleted.flat().length).toBeGreaterThan(0);
+    expect(app.office.tasks.remove(['T-1', 'T-999', 'nope'])).toEqual(['T-1']);
+    expect(app.office.tasks.exists('T-1')).toBe(false);
+    ws.close();
+  });
+
   it('crea con defaults y deriva el equipo del asignado', async () => {
     const t = await create({ title: 'Implementar login', assignee: 'backend', priority: 'p1', labels: ['auth'] });
     expect(t).toMatchObject({ id: 'T-1', column: 'backlog', team: 'ingenieria', priority: 'P1', labels: ['auth'] });

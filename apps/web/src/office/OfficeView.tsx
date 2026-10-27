@@ -8,6 +8,9 @@ import { EMPTY_FILTER, type TimelineFilter } from './insights.ts';
 import { AgentPanel, AgentTooltip, FloorPicker, ZonePanel } from './panels.tsx';
 import { OfficeScene } from './scene.ts';
 import { currentPrompt } from './zones.ts';
+import { sound, type Cue } from './sound.ts';
+import { SPEEDS, usePrefs, type Speed } from '../lib/prefs.ts';
+import type { OfficeEvent } from '@office/shared';
 import { Timeline } from './Timeline.tsx';
 import '../board/board.css';
 import './office.css';
@@ -25,7 +28,13 @@ export function OfficeView() {
   const openTaskId = useOffice((s) => s.openTaskId);
   const openTask = useOffice((s) => s.openTask);
   const [hover, setHover] = useState<{ agent: string; x: number; y: number } | null>(null);
-  const [timelineOpen, setTimelineOpen] = useState(false);
+  const timelineOpen = usePrefs((s) => s.timelineOpen);
+  const setTimelineOpen = (v: boolean | ((open: boolean) => boolean)) =>
+    usePrefs.getState().set({ timelineOpen: typeof v === 'function' ? v(usePrefs.getState().timelineOpen) : v });
+  const paused = usePrefs((s) => s.paused);
+  const speed = usePrefs((s) => s.speed);
+  const night = usePrefs((s) => s.resolved) === 'dark';
+  const setPrefs = usePrefs((s) => s.set);
   const [filter, setFilter] = useState<TimelineFilter>(EMPTY_FILTER);
 
   useEffect(() => {
@@ -35,13 +44,34 @@ export function OfficeView() {
     let alive = true;
     scene.onPick = (pick) => useOffice.getState().select(pick);
     scene.onHover = setHover;
-    void scene.init(host.current!).then(() => alive && setReady(true));
+    scene.onCue = (cue) => sound.play(cue);
+    scene.setNight(usePrefs.getState().resolved === 'dark');
+    void scene.init(host.current!).then(() => {
+      if (!alive) return;
+      // Vuelve a donde estaba la cámara antes de recargar.
+      const saved = usePrefs.getState().camera;
+      if (saved) scene.restoreCamera(saved);
+      setReady(true);
+    });
+    // Guarda la vista de la cámara de vez en cuando (y al salir).
+    const saveCamera = () => {
+      const v = scene.cameraView;
+      const prev = usePrefs.getState().camera;
+      if (v && (!prev || Math.abs(prev.x - v.x) > 1 || Math.abs(prev.y - v.y) > 1 || Math.abs(prev.zoom - v.zoom) > 0.01)) {
+        usePrefs.getState().set({ camera: v });
+      }
+    };
+    const cameraTimer = setInterval(saveCamera, 2000);
+    window.addEventListener('pagehide', saveCamera);
     const timer = setInterval(() => setFps(Math.round(scene.fps)), 500);
     // Pixi solo escucha el resize de la ventana; el panel de abajo también cambia el tamaño.
     const resize = new ResizeObserver(() => scene.app.renderer && scene.app.resize());
     resize.observe(host.current!);
     return () => {
       alive = false;
+      saveCamera();
+      clearInterval(cameraTimer);
+      window.removeEventListener('pagehide', saveCamera);
       resize.disconnect();
       clearInterval(timer);
       scene.destroy();
@@ -58,6 +88,28 @@ export function OfficeView() {
     if (ready) sceneRef.current?.setHighlight(highlighted);
   }, [ready, highlighted]);
 
+  useEffect(() => {
+    sceneRef.current?.setPlayback(speed, paused);
+  }, [ready, speed, paused]);
+
+  // Espacio pausa o reanuda (salvo que se esté escribiendo en un campo).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== ' ' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('input, textarea, select, button, [contenteditable]')) return;
+      e.preventDefault();
+      const p = usePrefs.getState();
+      p.set({ paused: !p.paused });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    sceneRef.current?.setNight(night);
+  }, [ready, night]);
+
   // Piso recargado entero → reconstruir la oficina sin animar el historial.
   const floorRev = useOffice((s) => s.floorRev);
   useEffect(() => {
@@ -70,7 +122,12 @@ export function OfficeView() {
     return useOffice.subscribe((s, prev) => {
       if (s.floorEvents === prev.floorEvents || s.floorRev !== prev.floorRev) return;
       const seen = prev.floorEvents.at(-1)?.id ?? 0;
-      for (const e of s.floorEvents) if (e.id > seen) sceneRef.current?.handleEvent(e);
+      for (const e of s.floorEvents) {
+        if (e.id <= seen) continue;
+        sceneRef.current?.handleEvent(e);
+        const cue = cueFor(e);
+        if (cue) sound.play(cue);
+      }
     });
   }, [ready]);
 
@@ -144,7 +201,12 @@ export function OfficeView() {
             </button>
           </div>
         )}
-        <div className="office-controls" role="toolbar" aria-label="Cámara">
+        {paused && (
+          <div className="office-paused" role="status">
+            En pausa · los eventos se siguen registrando
+          </div>
+        )}
+        <div className="office-controls" role="toolbar" aria-label="Cámara y animación">
           <button type="button" onClick={() => cam()?.zoomBy(0.8)} aria-label="Alejar">
             −
           </button>
@@ -154,6 +216,27 @@ export function OfficeView() {
           <button type="button" onClick={() => cam()?.zoomBy(1.25)} aria-label="Acercar">
             +
           </button>
+          <span className="sep" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={() => setPrefs({ paused: !paused })}
+            aria-pressed={paused}
+            aria-label={paused ? 'Reanudar animaciones' : 'Pausar animaciones'}
+            title={paused ? 'Reanudar (espacio)' : 'Pausar (espacio)'}
+          >
+            {paused ? '▶' : '❚❚'}
+          </button>
+          <select
+            value={speed}
+            onChange={(e) => setPrefs({ speed: Number(e.target.value) as Speed })}
+            aria-label="Velocidad de las animaciones"
+          >
+            {SPEEDS.map((v) => (
+              <option key={v} value={v}>
+                {String(v).replace('.', ',')}×
+              </option>
+            ))}
+          </select>
           <span className={`fps${fps > 0 && fps < 50 ? ' low' : ''}`} title="Cuadros por segundo">
             {fps} fps
           </span>
@@ -171,4 +254,22 @@ export function OfficeView() {
       </AnimatePresence>
     </div>
   );
+}
+
+/** Sonido para los eventos que se ven en la oficina (los de zona los pide la escena). */
+function cueFor(e: OfficeEvent): Cue | null {
+  switch (e.kind) {
+    case 'agent_start':
+      return 'enter';
+    case 'agent_stop':
+      return 'done';
+    case 'tool_error':
+      return 'error';
+    case 'waiting':
+      return 'waiting';
+    case 'task_move':
+      return 'card';
+    default:
+      return null;
+  }
 }

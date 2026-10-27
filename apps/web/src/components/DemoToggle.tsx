@@ -6,8 +6,12 @@ export function DemoToggle() {
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Se consulta cada tanto: la demo también se puede iniciar o cortar por API o al reiniciar el server.
   useEffect(() => {
-    void api.demoStatus().then((s) => setRunning(s.running)).catch(() => {});
+    const check = () => void api.demoStatus().then((s) => setRunning(s.running)).catch(() => {});
+    check();
+    const timer = setInterval(check, 5000);
+    return () => clearInterval(timer);
   }, []);
 
   const toggle = async () => {

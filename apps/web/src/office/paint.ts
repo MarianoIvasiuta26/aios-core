@@ -107,23 +107,26 @@ function paintWall(ctx: Ctx, m: OfficeMap, x: number, y: number) {
   if (c === 'window') {
     const top = cellAt(m, x, y - 1) !== 'window';
     rect(ctx, px, py, TILE, TILE, '#2c3245');
-    // Cielo nocturno con la ciudad.
-    const sky = top ? '#1d2a4a' : '#2a3a62';
+    // La ciudad por la ventana: de noche con luces encendidas, de día con cielo y nubes.
+    const sky = NIGHT ? (top ? '#1d2a4a' : '#2a3a62') : top ? '#7fb8f0' : '#a7d0f5';
     rect(ctx, px + 1, py + (top ? 2 : 0), TILE - 2, TILE - (top ? 2 : 1), sky);
     if (!top) {
       for (let i = 0; i < 4; i++) {
         const bh = 4 + Math.floor(hash(x, i) * 9);
         const bx = px + 1 + i * 4;
-        rect(ctx, bx, py + TILE - 1 - bh, 3, bh, '#141c30');
-        if (hash(x, i, 3) > 0.4) rect(ctx, bx + 1, py + TILE - bh + 1, 1, 1, '#f6d67a');
+        rect(ctx, bx, py + TILE - 1 - bh, 3, bh, NIGHT ? '#141c30' : '#7d8ca3');
+        if (NIGHT && hash(x, i, 3) > 0.4) rect(ctx, bx + 1, py + TILE - bh + 1, 1, 1, '#f6d67a');
+        if (!NIGHT && bh > 6) rect(ctx, bx + 1, py + TILE - bh + 2, 1, 1, '#c9d6e6');
       }
       rect(ctx, px, py + TILE - 1, TILE, 1, '#2c3245');
-    } else if (hash(x, y, 9) > 0.6) {
+    } else if (NIGHT && hash(x, y, 9) > 0.6) {
       rect(ctx, px + 4 + Math.floor(hash(x, 1) * 8), py + 5, 1, 1, '#dfe6ff');
+    } else if (!NIGHT && hash(x, y, 9) > 0.55) {
+      rect(ctx, px + 3 + Math.floor(hash(x, 1) * 7), py + 6, 5, 2, '#f4f8ff');
     }
     if (x === 8 && top) {
-      rect(ctx, px + 6, py + 4, 4, 4, '#f4ecc8');
-      rect(ctx, px + 8, py + 4, 2, 2, '#1d2a4a');
+      rect(ctx, px + 6, py + 4, 4, 4, NIGHT ? '#f4ecc8' : '#ffd84d');
+      if (NIGHT) rect(ctx, px + 8, py + 4, 2, 2, '#1d2a4a');
     }
     rect(ctx, px + TILE - 1, py, 1, TILE, '#3a425a');
     return;
@@ -392,7 +395,10 @@ function paintFurniture(ctx: Ctx, f: Furniture) {
   }
 }
 
-export function paintOffice(m: OfficeMap): HTMLCanvasElement {
+let NIGHT = true;
+
+export function paintOffice(m: OfficeMap, night = true): HTMLCanvasElement {
+  NIGHT = night;
   const canvas = document.createElement('canvas');
   canvas.width = WORLD_W;
   canvas.height = WORLD_H;

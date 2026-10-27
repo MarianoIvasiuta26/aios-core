@@ -131,7 +131,7 @@ export interface TaskChange {
 
 export type TaskStore = ReturnType<typeof createTaskStore>;
 
-export function createTaskStore(db: Database.Database, onChange: (c: TaskChange) => void) {
+export function createTaskStore(db: Database.Database, onChange: (c: TaskChange) => void, onRemove: (ids: string[]) => void = () => {}) {
   db.exec(SCHEMA);
 
   const getRow = db.prepare('SELECT * FROM tasks WHERE seq = ?');
@@ -279,6 +279,13 @@ export function createTaskStore(db: Database.Database, onChange: (c: TaskChange)
     },
     get(id: string): Task {
       return toTask(row(parseTaskId(id)));
+    },
+    /** Borra tarjetas (con su historial). Solo lo usa la demo para no dejar basura en el tablero. */
+    remove(ids: string[]): string[] {
+      const del = db.prepare('DELETE FROM tasks WHERE seq = ?');
+      const removed = db.transaction(() => ids.filter((id) => /^T-\d+$/.test(id) && del.run(parseTaskId(id)).changes > 0))();
+      if (removed.length) onRemove(removed);
+      return removed;
     },
     exists(id: string): boolean {
       const m = /^T-(\d+)$/.exec(id);

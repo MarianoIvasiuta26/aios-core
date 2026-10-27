@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { OfficeEvent, ServerMessage, SessionInfo, Task, TaskHistoryEntry, WorkspaceState } from '@office/shared';
 import { api, connectSocket, type ConnectionState } from './api.ts';
+import { usePrefs } from './prefs.ts';
 
 const MAX_EVENTS = 1000;
 
@@ -58,6 +59,7 @@ export const useOffice = create<OfficeState>((set, get) => ({
   setFloor(id, pinned = get().floorPinned) {
     const changed = id !== get().floor;
     set({ floor: id, floorPinned: pinned });
+    usePrefs.getState().set({ pinnedFloor: pinned ? id : null });
     if (changed) void loadFloor(id);
   },
 
@@ -108,6 +110,14 @@ function onMessage(msg: ServerMessage) {
       break;
     case 'session':
       set((s) => ({ sessions: [msg.session, ...s.sessions.filter((x) => x.id !== msg.session.id)] }));
+      break;
+    case 'task_deleted':
+      set((s) => {
+        const tasks = { ...s.tasks };
+        for (const id of msg.ids) delete tasks[id];
+        const closed = s.openTaskId !== null && msg.ids.includes(s.openTaskId);
+        return { tasks, ...(closed ? { openTaskId: null, openHistory: [] } : {}) };
+      });
       break;
     case 'task_upsert':
       set((s) => ({
@@ -177,7 +187,12 @@ async function loadSnapshot() {
   useOffice.setState({ tasks: Object.fromEntries(tasks.map((t) => [t.id, t])), sessions });
   // Al reconectar se recarga el piso entero por si se perdieron eventos.
   if (floor) void loadFloor(floor);
-  else setFloor(pickFloor(sessions));
+  else {
+    // Si antes de recargar había un piso fijado y la sesión sigue existiendo, se vuelve a él.
+    const pinned = usePrefs.getState().pinnedFloor;
+    if (pinned && sessions.some((s) => s.id === pinned)) setFloor(pinned, true);
+    else setFloor(pickFloor(sessions));
+  }
 }
 
 let started = false;

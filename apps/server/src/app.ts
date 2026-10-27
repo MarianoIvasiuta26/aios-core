@@ -56,7 +56,7 @@ export async function buildApp(opts: AppOptions) {
     if (moved) broadcast({ type: 'task_moved', taskId: task.id, ...moved });
     // Una tarjeta nueva o editada puede apuntar a un hallazgo crítico ya conocido.
     if (task.related) critical?.(states.values());
-  });
+  }, (ids) => broadcast({ type: 'task_deleted', ids }));
   critical = createCriticalAutomation(db.raw, tasks);
   const workspaces = createWorkspaces((ws) => {
     states.set(ws.root, ws);

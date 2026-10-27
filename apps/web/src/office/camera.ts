@@ -62,6 +62,22 @@ export class Camera {
     this.apply();
   };
 
+  /** Centro (en coordenadas del mundo) y zoom actuales, para guardarlos. */
+  get view() {
+    const { w, h } = this.screen;
+    return { x: (w / 2 - this.x) / this.zoom, y: (h / 2 - this.y) / this.zoom, zoom: this.zoom };
+  }
+
+  /** Vuelve a una vista guardada, sin animación. */
+  restore(v: { x: number; y: number; zoom: number }) {
+    const { w, h } = this.screen;
+    this.anim = null;
+    this.zoom = Math.min(MAX_ZOOM, Math.max(this.minZoom, v.zoom));
+    this.x = w / 2 - v.x * this.zoom;
+    this.y = h / 2 - v.y * this.zoom;
+    this.apply();
+  }
+
   /** Encaja toda la oficina en pantalla. */
   fit(animated = false) {
     this.minZoom = Math.min(1, this.fitZoom() * 0.9);

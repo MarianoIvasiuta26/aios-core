@@ -19,6 +19,7 @@ import { Director } from './director.ts';
 import { Monitor } from './monitor.ts';
 import { createPlaces } from './pathfind.ts';
 import { ZoneWidgets } from './widgets.ts';
+import type { Cue } from './sound.ts';
 import { zoneModel, zoneReactions, type ZoneReaction } from './zones.ts';
 import type { WorkspaceState } from '@office/shared';
 
@@ -194,10 +195,18 @@ export class OfficeScene {
   private workspaceRoot: string | null = null;
   private pendingWorkspace: WorkspaceState | null | undefined = undefined;
   private pendingPrompt: string | null = null;
+  private floorSprite: Sprite | null = null;
+  private night = true;
+  private speed = 1;
+  private paused = false;
+  /** Cuánto atrasa el reloj del director respecto del real (pausas y velocidades). */
+  private lag = 0;
   private readonly highlight = new Graphics();
   private readonly zoneOutline = new Graphics();
   /** Click (sin arrastre) sobre un personaje o una zona. */
   onPick: ((pick: Pick | null) => void) | null = null;
+  /** Momentos que merecen un sonido (los eventos de agentes los resuelve la vista). */
+  onCue: ((cue: Cue) => void) | null = null;
   /** Personaje bajo el cursor, con su posición en pantalla. */
   onHover: ((hover: { agent: string; x: number; y: number } | null) => void) | null = null;
   private hovered: string | null = null;
@@ -210,7 +219,7 @@ export class OfficeScene {
   async init(host: HTMLElement) {
     await this.app.init({
       resizeTo: host,
-      background: '#0e131c',
+      background: this.night ? '#0e131c' : '#cfd8e3',
       antialias: false,
       autoDensity: true,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
@@ -225,7 +234,8 @@ export class OfficeScene {
     await document.fonts.load(`10px "${PIXEL_FONT}"`).catch(() => {});
 
     this.app.stage.addChild(this.world);
-    this.world.addChild(new Sprite(Texture.from(paintOffice(this.map))));
+    this.floorSprite = new Sprite(Texture.from(paintOffice(this.map, this.night)));
+    this.world.addChild(this.floorSprite);
 
     const props = new Container();
     const actors = new Container();
@@ -279,7 +289,8 @@ export class OfficeScene {
       overlay.addChild(nameTag);
       this.nameTags.set(agent, nameTag);
     }
-    this.director = new Director([...this.actors.values()], places, this.map.walkable);
+    // El director usa un reloj que se frena con la pausa y se acelera con la velocidad.
+    this.director = new Director([...this.actors.values()], places, this.map.walkable, () => Date.now() - this.lag);
     front.addChild(this.particles.container);
 
     // Zonas vivas: backlog, semáforo, SOC, embudo, oportunidades, mapa de leads y pizarrón.
@@ -353,10 +364,13 @@ export class OfficeScene {
   }
 
   private readonly tick = (t: Ticker) => {
-    const dt = t.deltaMS / 1000;
-    this.elapsed += dt;
+    const real = t.deltaMS / 1000;
+    const k = this.paused ? 0 : this.speed;
+    const dt = real * k;
+    this.lag += t.deltaMS * (1 - k);
+    this.elapsed += real;
     this.board?.update(dt);
-    this.director.update();
+    if (!this.paused) this.director.update();
     for (const [agent, actor] of this.actors) {
       actor.update(dt);
       const tag = this.nameTags.get(agent)!;
@@ -366,7 +380,7 @@ export class OfficeScene {
     for (const m of this.monitors) m.update(dt);
     this.widgets?.update(dt, this.socActive());
     this.particles.update(dt);
-    this.camera.update(dt);
+    this.camera.update(real);
     if (this.hovered) this.emitHover();
     if (this.highlighted) {
       const actor = this.actors.get(this.highlighted);
@@ -449,7 +463,33 @@ export class OfficeScene {
 
   /** Rehace el piso a partir del historial de la sesión (sin animar). */
   resetFloor(events: OfficeEvent[]) {
+    this.lag = 0;
     this.director?.reset(events);
+  }
+
+  /** Velocidad de las animaciones (1 = normal) y pausa. La cámara sigue respondiendo en pausa. */
+  setPlayback(speed: number, paused: boolean) {
+    this.speed = speed;
+    this.paused = paused;
+  }
+
+  /** De noche (modo oscuro) o de día: cambia la ciudad que se ve por las ventanas. */
+  setNight(night: boolean) {
+    if (night === this.night) return;
+    this.night = night;
+    if (!this.floorSprite) return;
+    const old = this.floorSprite.texture;
+    this.floorSprite.texture = Texture.from(paintOffice(this.map, night));
+    old.destroy(true);
+    this.app.renderer.background.color = night ? '#0e131c' : '#cfd8e3';
+  }
+
+  get cameraView() {
+    return this.camera?.view ?? null;
+  }
+
+  restoreCamera(v: { x: number; y: number; zoom: number }) {
+    this.camera?.restore(v);
   }
 
   handleEvent(e: OfficeEvent) {
@@ -479,6 +519,7 @@ export class OfficeScene {
     const widgets = this.widgets!;
     switch (r.type) {
       case 'critical': {
+        this.onCue?.('alarm');
         widgets.raiseAlarm();
         const text = `¡Crítico! ${r.finding.id}`;
         // Avisa quien lo encontró; si ya no está en la oficina, compliance; si tampoco, el jefe se entera solo.
@@ -498,6 +539,7 @@ export class OfficeScene {
         else if (r.light === 'verde') for (const a of ['qa-unit', 'qa-e2e']) this.director.react(a);
         break;
       case 'hot-opportunity':
+        this.onCue?.('hot');
         widgets.sparkleChart();
         this.director.react('analista-mercado');
         break;
@@ -505,6 +547,7 @@ export class OfficeScene {
         this.director.react('prospector');
         break;
       case 'draft-approved': {
+        this.onCue?.('approved');
         const gerente = this.actors.get('gerente-ventas');
         const desk = this.map.desks.find((d) => d.agent === 'gerente-ventas');
         this.director.react('gerente-ventas');

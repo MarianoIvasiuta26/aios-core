@@ -1,9 +1,12 @@
-import { useEffect, useState, type MouseEvent } from 'react';
-import { BoardPage } from './board/BoardPage.tsx';
-import { DebugPage } from './debug/DebugPage.tsx';
+import { lazy, Suspense, useEffect, useState, type MouseEvent } from 'react';
 import { DemoToggle } from './components/DemoToggle.tsx';
-import { OfficeView } from './office/OfficeView.tsx';
+import { Preferences } from './components/Preferences.tsx';
 import { useOffice } from './lib/store.ts';
+
+// Cada página en su propio archivo: Pixi solo se baja con la oficina y dnd-kit con el tablero.
+const OfficeView = lazy(() => import('./office/OfficeView.tsx').then((m) => ({ default: m.OfficeView })));
+const BoardPage = lazy(() => import('./board/BoardPage.tsx').then((m) => ({ default: m.BoardPage })));
+const DebugPage = lazy(() => import('./debug/DebugPage.tsx').then((m) => ({ default: m.DebugPage })));
 
 const ROUTES = [
   { path: '/', label: 'Oficina' },
@@ -46,19 +49,16 @@ export function App() {
           ))}
         </ul>
         <span className="spacer" />
+        <Preferences />
         <DemoToggle />
         <span className={`conn conn-${conn}`} role="status">
           {CONN_LABEL[conn]}
         </span>
       </nav>
       <main className="content">
-        {path.startsWith('/tablero') ? (
-          <BoardPage />
-        ) : path.startsWith('/debug') ? (
-          <DebugPage />
-        ) : (
-          <OfficeView />
-        )}
+        <Suspense fallback={<p className="muted page-loading">Cargando…</p>}>
+          {path.startsWith('/tablero') ? <BoardPage /> : path.startsWith('/debug') ? <DebugPage /> : <OfficeView />}
+        </Suspense>
       </main>
     </div>
   );

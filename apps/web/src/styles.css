@@ -22,6 +22,24 @@
   --err: #ff7a7a;
   --warn: #ffd166;
 
+  /* Superficies que dependen del tema */
+  --stage: #0e131c;
+  --overlay: rgba(26, 35, 51, 0.92);
+  --row-line: #222c3e;
+  --gold-hover: #f6cf6e;
+  --gold-text: var(--gold);
+  --soft-blue: #8fb3d9;
+  --soft-violet: #c9b8ff;
+  --code: #9be8b8;
+  --edited-bg: #3a3220;
+  --blocked-col: #2a1d27;
+  --error-bg: #3a1f25;
+  --glow: #2a3753;
+  --scrim: rgba(6, 9, 15, 0.55);
+  --sev-alta: #ff9f43;
+  --sev-baja: #74c0fc;
+  --away: #4a5468;
+
   --font-body: 'Atkinson Hyperlegible', system-ui, sans-serif;
   --font-pixel: 'Pixelify Sans', var(--font-body);
   color-scheme: dark;
@@ -29,10 +47,39 @@
   font-size: 15px;
   line-height: 1.45;
 }
+/* Modo claro: oficina de día. Los papeles, cintas y la oficina pixel art no cambian. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --night: #eef1f5;
+  --wall: #ffffff;
+  --wall-2: #e4e9f0;
+  --line: #c9d2de;
+  --text: #1c2330;
+  --muted: #586274;
+  --gold-text: #8a5a00;
+  --ok: #2b8a3e;
+  --err: #c92a2a;
+  --warn: #9a6b00;
+  --stage: #cfd8e3;
+  --overlay: rgba(255, 255, 255, 0.94);
+  --row-line: #e1e6ed;
+  --gold-hover: #e5b43c;
+  --soft-blue: #2f6aa8;
+  --soft-violet: #6741d9;
+  --code: #2b7a4b;
+  --edited-bg: #fbecc8;
+  --blocked-col: #f6e3e6;
+  --error-bg: #fbe1e3;
+  --glow: #ffffff;
+  --scrim: rgba(20, 28, 40, 0.35);
+  --sev-alta: #c25e00;
+  --sev-baja: #1c6fb5;
+  --away: #a0a9b8;
+}
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body { margin: 0; background: var(--night); color: var(--text); }
-a { color: var(--gold); }
+a { color: var(--gold-text); }
 :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .muted { color: var(--muted); }
 
@@ -44,7 +91,7 @@ button {
 button:hover:not(:disabled) { border-color: var(--muted); }
 button:disabled { opacity: 0.45; cursor: default; }
 button.primary { background: var(--gold); color: var(--ink); border-color: var(--gold); font-weight: 700; }
-button.primary:hover:not(:disabled) { background: #f6cf6e; }
+button.primary:hover:not(:disabled) { background: var(--gold-hover); }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
 button.ghost:hover:not(:disabled) { color: var(--text); border-color: var(--line); }
 input, select, textarea {
@@ -58,7 +105,7 @@ input, select, textarea {
   display: flex; align-items: center; gap: 24px; padding: 0 16px; height: 48px;
   background: var(--wall); border-bottom: 1px solid var(--line);
 }
-.logo { font-family: var(--font-pixel); font-weight: 700; font-size: 19px; color: var(--gold); }
+.logo { font-family: var(--font-pixel); font-weight: 700; font-size: 19px; color: var(--gold-text); }
 .topbar ul { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
 .topbar a { display: block; padding: 6px 12px; border-radius: 6px; color: var(--muted); text-decoration: none; }
 .topbar a:hover { color: var(--text); }
@@ -83,7 +130,7 @@ input, select, textarea {
 .debug main { display: grid; grid-template-columns: 280px 1fr; font-size: 13px; }
 .debug aside { padding: 16px; border-right: 1px solid var(--line); }
 .debug aside ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
-.debug .prompt { color: #c9b8ff; margin-top: 2px; overflow-wrap: anywhere; }
+.debug .prompt { color: var(--soft-violet); margin-top: 2px; overflow-wrap: anywhere; }
 .debug table { width: 100%; border-collapse: collapse; }
 .debug th { text-align: left; color: var(--muted); font-weight: normal; padding: 8px; border-bottom: 1px solid var(--line); }
 .debug td { padding: 4px 8px; border-bottom: 1px solid var(--wall-2); vertical-align: top; }
@@ -105,3 +152,6 @@ input, select, textarea {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+.prefs { display: flex; gap: 6px; align-items: center; }
+.prefs select { background: var(--wall-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; }
+.page-loading { padding: 16px; }

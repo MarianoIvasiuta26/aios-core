@@ -52,6 +52,7 @@ export type ServerMessage =
   | { type: 'session'; session: SessionInfo }
   | { type: 'task_upsert'; task: Task; entries: TaskHistoryEntry[] }
   | { type: 'task_moved'; taskId: string; from: Column; to: Column; by: string }
+  | { type: 'task_deleted'; ids: string[] }
   | { type: 'workspace'; workspace: WorkspaceState };
 
 export interface SessionInfo {

@@ -422,6 +422,12 @@ export function createDemo(ingest: Ingest, tasks: TaskStore, root = CWD) {
   CWD = root;
   const files = createDemoFiles(root);
   let timers: NodeJS.Timeout[] = [];
+  /** Tarjetas creadas por la demo: se borran al empezar cada vuelta y al detenerla. */
+  let created: string[] = [];
+  const cleanup = () => {
+    tasks.remove(created);
+    created = [];
+  };
   let running = false;
   let sessionId: string | null = null;
 
@@ -431,6 +437,7 @@ export function createDemo(ingest: Ingest, tasks: TaskStore, root = CWD) {
     const found: ReturnType<typeof CLOUD_FINDINGS> = [];
     let postura: number | undefined;
     files.reset();
+    cleanup();
     const boardFor = (actor: string): Board => ({
       files,
       id: (ref) => refs.get(ref) ?? ref,
@@ -439,7 +446,11 @@ export function createDemo(ingest: Ingest, tasks: TaskStore, root = CWD) {
         postura = p ?? postura;
         files.write('docs/security/hallazgos.json', findings(found, postura));
       },
-      create: (ref, task) => refs.set(ref, tasks.create({ ...task, actor }).task.id),
+      create: (ref, task) => {
+        const id = tasks.create({ ...task, actor }).task.id;
+        created.push(id);
+        refs.set(ref, id);
+      },
       move: (ref, column) => {
         const id = refs.get(ref);
         if (id && tasks.exists(id) && tasks.get(id).column !== column) tasks.update(id, { column, actor });
@@ -482,6 +493,7 @@ export function createDemo(ingest: Ingest, tasks: TaskStore, root = CWD) {
       running = false;
       for (const t of timers) clearTimeout(t);
       timers = [];
+      cleanup();
       if (sessionId) {
         ingest.push({ session_id: sessionId, cwd: CWD, hook_event_name: 'SessionEnd', reason: 'other' }, Date.now(), 'demo');
       }
