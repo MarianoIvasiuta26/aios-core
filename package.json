@@ -1,0 +1,19 @@
+{
+  "name": "agent-office",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"pnpm --filter @office/server dev\" \"pnpm --filter @office/web dev\"",
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck",
+    "office": "tsx scripts/office.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

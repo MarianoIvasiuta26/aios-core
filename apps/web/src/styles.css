@@ -1,0 +1,48 @@
+:root {
+  --bg: #14161c;
+  --panel: #1d2029;
+  --line: #2c303c;
+  --text: #e6e6e6;
+  --muted: #8a90a0;
+  --ok: #6bd968;
+  --err: #ff6b6b;
+  --warn: #ffd166;
+  color-scheme: dark;
+  font-family: ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  font-size: 13px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+a { color: #8ab4ff; }
+.muted { color: var(--muted); }
+.placeholder { padding: 48px; }
+
+.debug header {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.debug h1 { font-size: 15px; margin: 0; }
+.debug h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; }
+.debug button, .debug input {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; font: inherit;
+}
+.debug button { cursor: pointer; }
+.debug button:hover { border-color: var(--muted); }
+.conn-open { color: var(--ok); }
+.conn-closed { color: var(--err); }
+.conn-connecting { color: var(--warn); }
+.debug main { display: grid; grid-template-columns: 280px 1fr; }
+.debug aside { padding: 16px; border-right: 1px solid var(--line); }
+.debug aside ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.debug .prompt { color: #c9b8ff; margin-top: 2px; overflow-wrap: anywhere; }
+.debug table { width: 100%; border-collapse: collapse; }
+.debug th { text-align: left; color: var(--muted); font-weight: normal; padding: 8px; border-bottom: 1px solid var(--line); }
+.debug td { padding: 4px 8px; border-bottom: 1px solid #20232c; vertical-align: top; }
+.debug td:nth-child(5) { overflow-wrap: anywhere; }
+.debug .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.st-error td { color: var(--err); }
+.st-waiting td { color: var(--warn); }
+.st-running td:nth-child(4) { color: #8ab4ff; }
+@media (max-width: 800px) { .debug main { grid-template-columns: 1fr; } .debug aside { border-right: 0; } }
